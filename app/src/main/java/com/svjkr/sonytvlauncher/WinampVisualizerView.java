@@ -223,11 +223,7 @@ public class WinampVisualizerView extends View {
 
     private float spectrumAmount(int index, int barCount, float time) {
         if (fftData != null && fftData.length > 4) {
-            int bin = 2 + Math.round((fftData.length / 2f - 3f) * index / Math.max(1, barCount - 1));
-            int real = fftData[Math.min(fftData.length - 1, bin * 2)];
-            int imag = fftData[Math.min(fftData.length - 1, bin * 2 + 1)];
-            float magnitude = (float) Math.hypot(real, imag) / 128f;
-            return Math.max(0.04f, Math.min(1f, magnitude * 1.55f));
+            return fftSpectrumAmount(index, barCount);
         }
 
         float phase = time + index * 0.43f + (signalSeed % 37) * 0.13f;
@@ -236,6 +232,52 @@ public class WinampVisualizerView extends View {
         float energy = playing ? 1f : 0.36f;
         fallbackBars[index % fallbackBars.length] = 0.18f + wave * 0.62f + pulse * 0.20f;
         return fallbackBars[index % fallbackBars.length] * energy;
+    }
+
+    private float fftSpectrumAmount(int index, int barCount) {
+        int halfBins = (fftData.length / 2) - 1;
+        int maxBin = Math.min(halfBins, Math.max(barCount + 2, fftData.length / 12));
+        if (maxBin <= 1) {
+            return 0.04f;
+        }
+
+        float start = index / (float) Math.max(1, barCount);
+        float end = (index + 1f) / Math.max(1, barCount);
+        int startBin = 1 + Math.round(frequencyCurve(start) * (maxBin - 1));
+        int endBin = 1 + Math.round(frequencyCurve(end) * (maxBin - 1));
+        endBin = Math.max(startBin, endBin);
+
+        float sum = 0f;
+        float peak = 0f;
+        int count = 0;
+        for (int bin = startBin; bin <= endBin; bin++) {
+            float magnitude = fftMagnitude(bin);
+            sum += magnitude;
+            peak = Math.max(peak, magnitude);
+            count++;
+        }
+
+        float average = count == 0 ? 0f : sum / count;
+        float target = Math.min(1f, (average * 0.70f + peak * 0.30f) * 2.35f);
+        int smoothIndex = index % fallbackBars.length;
+        float previous = fallbackBars[smoothIndex];
+        float smoothing = target > previous ? 0.62f : 0.24f;
+        fallbackBars[smoothIndex] = previous + (target - previous) * smoothing;
+        return Math.max(0.04f, fallbackBars[smoothIndex]);
+    }
+
+    private float frequencyCurve(float position) {
+        float clamped = Math.max(0f, Math.min(1f, position));
+        double curve = Math.pow(2.0, clamped * 3.6) - 1.0;
+        return (float) (curve / (Math.pow(2.0, 3.6) - 1.0));
+    }
+
+    private float fftMagnitude(int bin) {
+        int realIndex = Math.min(fftData.length - 1, bin * 2);
+        int imagIndex = Math.min(fftData.length - 1, bin * 2 + 1);
+        int real = fftData[realIndex];
+        int imag = fftData[imagIndex];
+        return Math.min(1f, (float) Math.hypot(real, imag) / 128f);
     }
 
     private void drawWave(Canvas canvas, int width, int height) {
