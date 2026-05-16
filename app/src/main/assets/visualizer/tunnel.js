@@ -12,6 +12,9 @@
     var audioSize = 1024;
     var lastAudioTimestampMs = 0;
     var transitionDurationMs = 950;
+    var maxVisualDeltaMs = 50;
+    var globalTimeScale = 0.74;
+    var visualTimeSeconds = 0;
     var audio = {
         rms: 0.10,
         bass: 0.10,
@@ -25,43 +28,200 @@
 
     var presets = [
         {
+            name: "Tuggummi Worm-O-Rama",
             shape: 0,
-            turn: 0.08,
+            turn: 0.18,
+            twist: 0.36,
+            speed: 0.46,
+            ribs: 2.55,
+            spokes: 13.0,
+            beam: 0.18,
+            intensity: 0.64,
+            colorA: [0.04, 0.46, 0.72],
+            colorB: [0.62, 0.08, 0.50],
+            colorC: [0.78, 0.42, 0.12]
+        },
+        {
+            name: "UnConeD Containment",
+            shape: 0,
+            turn: 0.10,
+            twist: 0.24,
+            speed: 0.34,
+            ribs: 1.85,
+            spokes: 10.0,
+            beam: 0.12,
+            intensity: 0.58,
+            colorA: [0.10, 0.40, 0.62],
+            colorB: [0.55, 0.16, 0.45],
+            colorC: [0.18, 0.74, 0.70]
+        },
+        {
+            name: "UnConeD Neon Coaster",
+            shape: 0.25,
+            turn: 0.36,
             twist: 0.18,
-            speed: 1.20,
-            ribs: 2.30,
-            spokes: 14.0,
-            beam: 0.22,
+            speed: 0.52,
+            ribs: 1.55,
+            spokes: 6.0,
+            beam: 0.26,
             intensity: 0.72,
-            colorA: [0.00, 0.58, 0.88],
-            colorB: [0.72, 0.08, 0.58],
-            colorC: [0.95, 0.52, 0.10]
+            colorA: [0.05, 0.68, 0.90],
+            colorB: [0.90, 0.14, 0.62],
+            colorC: [0.72, 0.82, 0.16]
         },
         {
-            shape: 1,
-            turn: 0.28,
-            twist: 0.08,
-            speed: 1.28,
-            ribs: 2.10,
-            spokes: 7.0,
-            beam: 0.28,
-            intensity: 0.76,
-            colorA: [0.04, 0.72, 0.32],
-            colorB: [0.04, 0.20, 0.72],
-            colorC: [0.90, 0.18, 0.04]
+            name: "UnConeD Speeder 3K",
+            shape: 0.10,
+            turn: 0.22,
+            twist: 0.14,
+            speed: 0.70,
+            ribs: 2.90,
+            spokes: 18.0,
+            beam: 0.30,
+            intensity: 0.74,
+            colorA: [0.08, 0.62, 0.92],
+            colorB: [0.28, 0.18, 0.72],
+            colorC: [0.86, 0.78, 0.34]
         },
         {
+            name: "UnConeD Tie Tunnel SSC",
             shape: 0,
             turn: 0.16,
-            twist: 0.65,
-            speed: 1.05,
-            ribs: 3.45,
-            spokes: 22.0,
-            beam: 0.20,
+            twist: 0.48,
+            speed: 0.48,
+            ribs: 2.35,
+            spokes: 8.0,
+            beam: 0.34,
             intensity: 0.70,
-            colorA: [0.56, 0.10, 0.82],
-            colorB: [0.02, 0.64, 0.50],
-            colorC: [0.82, 0.68, 0.24]
+            colorA: [0.06, 0.72, 0.76],
+            colorB: [0.74, 0.10, 0.38],
+            colorC: [0.88, 0.62, 0.16]
+        },
+        {
+            name: "UnConeD Zero-G Maze II",
+            shape: 1,
+            turn: 0.28,
+            twist: 0.18,
+            speed: 0.40,
+            ribs: 1.72,
+            spokes: 6.0,
+            beam: 0.20,
+            intensity: 0.62,
+            colorA: [0.04, 0.52, 0.34],
+            colorB: [0.08, 0.20, 0.62],
+            colorC: [0.58, 0.80, 0.18]
+        },
+        {
+            name: "UnConeD Zero-G Maze III",
+            shape: 1,
+            turn: 0.24,
+            twist: 0.28,
+            speed: 0.44,
+            ribs: 2.05,
+            spokes: 7.0,
+            beam: 0.18,
+            intensity: 0.66,
+            colorA: [0.10, 0.36, 0.72],
+            colorB: [0.48, 0.10, 0.70],
+            colorC: [0.78, 0.70, 0.24]
+        },
+        {
+            name: "Duo Hash the Planet",
+            shape: 0,
+            turn: 0.04,
+            twist: 0.05,
+            speed: 0.36,
+            ribs: 1.15,
+            spokes: 4.0,
+            beam: 0.10,
+            intensity: 0.56,
+            colorA: [0.34, 0.12, 0.58],
+            colorB: [0.10, 0.46, 0.60],
+            colorC: [0.70, 0.42, 0.12]
+        },
+        {
+            name: "fUk Afterburner Remix",
+            shape: 0.65,
+            turn: 0.20,
+            twist: 0.12,
+            speed: 0.58,
+            ribs: 2.25,
+            spokes: 5.0,
+            beam: 0.34,
+            intensity: 0.70,
+            colorA: [0.70, 0.12, 0.04],
+            colorB: [0.08, 0.22, 0.56],
+            colorC: [0.92, 0.46, 0.08]
+        },
+        {
+            name: "NemoOrange Building Blocks",
+            shape: 1,
+            turn: 0.04,
+            twist: 0.03,
+            speed: 0.28,
+            ribs: 0.82,
+            spokes: 4.0,
+            beam: 0.08,
+            intensity: 0.58,
+            colorA: [0.18, 0.38, 0.66],
+            colorB: [0.58, 0.42, 0.16],
+            colorC: [0.50, 0.74, 0.28]
+        },
+        {
+            name: "UnConeD Butterfly Caught",
+            shape: 0.10,
+            turn: 0.12,
+            twist: 0.12,
+            speed: 0.34,
+            ribs: 1.25,
+            spokes: 9.0,
+            beam: 0.22,
+            intensity: 0.60,
+            colorA: [0.18, 0.54, 0.26],
+            colorB: [0.58, 0.32, 0.12],
+            colorC: [0.74, 0.60, 0.26]
+        },
+        {
+            name: "UnConeD Don't Trip and Drive",
+            shape: 1,
+            turn: 0.18,
+            twist: 0.05,
+            speed: 0.46,
+            ribs: 1.45,
+            spokes: 12.0,
+            beam: 0.12,
+            intensity: 0.60,
+            colorA: [0.10, 0.34, 0.20],
+            colorB: [0.46, 0.16, 0.10],
+            colorC: [0.82, 0.52, 0.18]
+        },
+        {
+            name: "UnConeD Seismogrid",
+            shape: 1,
+            turn: 0.02,
+            twist: 0.02,
+            speed: 0.30,
+            ribs: 1.35,
+            spokes: 14.0,
+            beam: 0.10,
+            intensity: 0.64,
+            colorA: [0.02, 0.52, 0.60],
+            colorB: [0.08, 0.20, 0.34],
+            colorC: [0.46, 0.82, 0.70]
+        },
+        {
+            name: "lone Gold Shower 3D",
+            shape: 0,
+            turn: 0.10,
+            twist: 0.22,
+            speed: 0.42,
+            ribs: 2.60,
+            spokes: 19.0,
+            beam: 0.20,
+            intensity: 0.68,
+            colorA: [0.72, 0.42, 0.06],
+            colorB: [0.32, 0.16, 0.02],
+            colorC: [0.94, 0.76, 0.24]
         }
     ];
     var displayedPreset = copyPreset(presets[presetIndex]);
@@ -287,6 +447,7 @@
 
     function copyPreset(preset) {
         return {
+            name: preset.name,
             shape: preset.shape,
             turn: preset.turn,
             twist: preset.twist,
@@ -344,7 +505,7 @@
     function applyPresetUniforms(now) {
         var preset = updateDisplayedPreset(now);
         gl.uniform2f(locations.resolution, canvas.width, canvas.height);
-        gl.uniform1f(locations.time, now * 0.001);
+        gl.uniform1f(locations.time, visualTimeSeconds);
         gl.uniform4f(locations.audio, audio.rms, audio.bass, audio.mid, audio.treb);
         gl.uniform4f(locations.motion, preset.shape, preset.turn, preset.twist, preset.speed);
         gl.uniform4f(locations.grid, preset.ribs, preset.spokes, preset.beam, preset.intensity);
@@ -359,8 +520,11 @@
         }
 
         resize();
+        var deltaMs = 0;
         if (lastFrameAt > 0) {
-            frameTimes.push(now - lastFrameAt);
+            deltaMs = now - lastFrameAt;
+            frameTimes.push(deltaMs);
+            visualTimeSeconds += Math.max(0, Math.min(maxVisualDeltaMs, deltaMs)) * 0.001 * globalTimeScale;
         }
         lastFrameAt = now;
 
@@ -470,6 +634,7 @@
             metricsStartAt = now;
             warmupUntil = now + 10000;
             lastFrameAt = 0;
+            visualTimeSeconds = 0;
             updateSyntheticTargets(now);
             window.requestAnimationFrame(render);
             safeBridge("reportReady");
