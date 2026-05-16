@@ -1,0 +1,28 @@
+<resources>
+    <string name="app_name">BRAVIA Launcher</string>
+    <string name="section_apps">Apps</string>
+    <string name="error_launch_failed">Unable to open app</string>
+    <string name="plex_continue_unavailable">Nothing to continue</string>
+    <string name="plex_app_not_found">Plex app not installed</string>
+    <string name="edit_apps_title">Edit Apps</string>
+    <string name="done">Done</string>
+    <string name="app_state_shown">Shown</string>
+    <string name="app_state_hidden">Hidden</string>
+    <string name="app_hidden">%1$s hidden</string>
+    <string name="spotify_status">Spotify</string>
+    <string name="spotify_connect_title">Open Spotify</string>
+    <string name="spotify_connect_subtitle">Hold OK for local sync access</string>
+    <string name="spotify_session_access_title">Enable Spotify sync</string>
+    <string name="spotify_session_access_subtitle">Hold OK to allow media access</string>
+    <string name="spotify_playing">Spotify playing</string>
+    <string name="spotify_paused">Spotify paused</string>
+    <string name="spotify_not_playing">Nothing playing</string>
+    <string name="spotify_open_to_start">Open Spotify to start music</string>
+    <string name="spotify_connected">Spotify connected</string>
+    <string name="spotify_auth_failed">Spotify sign-in failed</string>
+    <string name="spotify_config_missing">Spotify client ID is not configured</string>
+    <string name="spotify_no_browser">No browser available for Spotify sign-in</string>
+    <string name="spotify_app_not_found">Spotify app not installed</string>
+    <string name="spotify_notification_listener">BRAVIA Launcher Spotify Sync</string>
+    <string name="winamp_dream_name">BRAVIA Visualiser</string>
+</resources>
