@@ -22,6 +22,7 @@ public class VisualizerActivity extends Activity {
 
     private WinampVisualizerView legacyVisualizerView;
     private ButterchurnVisualizerHost butterchurnHost;
+    private int legacySelectionIndex;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -99,6 +100,20 @@ public class VisualizerActivity extends Activity {
     }
 
     @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event != null
+                && event.getAction() == KeyEvent.ACTION_DOWN
+                && isPresetSelectionKey(event.getKeyCode())) {
+            if (event.getRepeatCount() > 0) {
+                return true;
+            }
+            selectVisualizerPreset(event.getKeyCode());
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK
                 || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
@@ -131,5 +146,38 @@ public class VisualizerActivity extends Activity {
         legacyVisualizerView = new WinampVisualizerView(this);
         legacyVisualizerView.setSignal("preview", true, 0);
         setContentView(legacyVisualizerView);
+    }
+
+    private boolean isPresetSelectionKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_DPAD_UP
+                || keyCode == KeyEvent.KEYCODE_DPAD_DOWN
+                || keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+                || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT;
+    }
+
+    private void selectVisualizerPreset(int keyCode) {
+        String direction;
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+            direction = "previous";
+        } else if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            direction = "next";
+        } else {
+            direction = "random";
+        }
+
+        if (butterchurnHost != null && butterchurnHost.selectPreset(direction)) {
+            return;
+        }
+
+        if (legacyVisualizerView != null) {
+            if ("previous".equals(direction)) {
+                legacySelectionIndex--;
+            } else if ("next".equals(direction)) {
+                legacySelectionIndex++;
+            } else {
+                legacySelectionIndex = (int) (System.currentTimeMillis() % Integer.MAX_VALUE);
+            }
+            legacyVisualizerView.setSignal("legacy-" + legacySelectionIndex, true, 0);
+        }
     }
 }

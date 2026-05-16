@@ -138,6 +138,18 @@
         visualizer.loadPreset(presets[presetIndex], blendSeconds || 0);
     }
 
+    function randomPresetIndex() {
+        var presets = window.BRAVIA_PRESETS || [];
+        if (presets.length <= 1) {
+            return presetIndex;
+        }
+        var next = presetIndex;
+        while (next === presetIndex) {
+            next = Math.floor(Math.random() * presets.length);
+        }
+        return next;
+    }
+
     function checkWebGl2() {
         try {
             var gl = canvas.getContext("webgl2", {
@@ -205,8 +217,14 @@
                 safeBridge("reportAudioFrameConsumed", lastAudioTimestampMs);
             }
         },
-        cyclePreset: function () {
-            loadPreset(presetIndex + 1, 1.2);
+        selectPreset: function (direction) {
+            if (direction === "previous") {
+                loadPreset(presetIndex - 1, 1.0);
+            } else if (direction === "next") {
+                loadPreset(presetIndex + 1, 1.0);
+            } else if (direction === "random") {
+                loadPreset(randomPresetIndex(), 1.0);
+            }
         }
     };
 

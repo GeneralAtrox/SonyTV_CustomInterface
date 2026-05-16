@@ -183,6 +183,25 @@ public class ButterchurnVisualizerHost extends FrameLayout {
         }
     }
 
+    public boolean selectPreset(String direction) {
+        if (destroyed || webView == null || fallbackView != null || !jsReady) {
+            return false;
+        }
+        if (!"previous".equals(direction)
+                && !"next".equals(direction)
+                && !"random".equals(direction)) {
+            return false;
+        }
+        logEvent("visualizer_preset_select", direction);
+        webView.evaluateJavascript(
+                "window.braviaVisualizer&&window.braviaVisualizer.selectPreset('"
+                        + direction
+                        + "');",
+                null
+        );
+        return true;
+    }
+
     private void ensureWebView() {
         if (webView != null) {
             return;
