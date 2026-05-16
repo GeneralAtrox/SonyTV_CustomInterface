@@ -18,7 +18,9 @@ public class VisualizerActivity extends Activity {
     private static final String PREF_VISUALIZER_ENGINE = "visualizer_engine";
     private static final String ENGINE_LEGACY = "legacy";
     private static final String ENGINE_BUTTERCHURN = "butterchurn";
+    private static final String ENGINE_TUNNEL_3D = "tunnel3d";
     private static final String ENGINE_PROJECTM = "projectm";
+    private static final String TUNNEL_START_URL = "https://bravia.visualizer.local/visualizer/tunnel.html";
 
     private WinampVisualizerView legacyVisualizerView;
     private ButterchurnVisualizerHost butterchurnHost;
@@ -38,7 +40,13 @@ public class VisualizerActivity extends Activity {
                         | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         );
 
-        if (ENGINE_BUTTERCHURN.equals(requestedEngine())
+        String engine = requestedEngine();
+        if (ENGINE_TUNNEL_3D.equals(engine)
+                && !ButterchurnVisualizerHost.isDisabledForProcess()) {
+            butterchurnHost = new ButterchurnVisualizerHost(this, TUNNEL_START_URL, ENGINE_TUNNEL_3D);
+            setContentView(butterchurnHost);
+            butterchurnHost.start();
+        } else if (ENGINE_BUTTERCHURN.equals(engine)
                 && !ButterchurnVisualizerHost.isDisabledForProcess()) {
             butterchurnHost = new ButterchurnVisualizerHost(this);
             setContentView(butterchurnHost);
@@ -125,14 +133,16 @@ public class VisualizerActivity extends Activity {
     }
 
     private String requestedEngine() {
-        String defaultEngine = isDebugBuild() ? ENGINE_BUTTERCHURN : ENGINE_LEGACY;
+        String defaultEngine = isDebugBuild() ? ENGINE_TUNNEL_3D : ENGINE_LEGACY;
         String engine = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getString(PREF_VISUALIZER_ENGINE, defaultEngine);
         if (ENGINE_PROJECTM.equals(engine)) {
             Log.i(TAG, "projectm engine requested before native support exists; using legacy");
             return ENGINE_LEGACY;
         }
-        if (ENGINE_BUTTERCHURN.equals(engine) || ENGINE_LEGACY.equals(engine)) {
+        if (ENGINE_TUNNEL_3D.equals(engine)
+                || ENGINE_BUTTERCHURN.equals(engine)
+                || ENGINE_LEGACY.equals(engine)) {
             return engine;
         }
         return defaultEngine;

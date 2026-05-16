@@ -11,3 +11,8 @@ Files: visualizer/presets.js
 Presets: BRAVIA Tunnel Turns, BRAVIA Hyperspace Bore, BRAVIA Ice Shaft, BRAVIA Magenta Wormhole, BRAVIA Redline Descent, BRAVIA Emerald Bend, BRAVIA Amber Tube, BRAVIA Blue Corkscrew, BRAVIA Violet Chicane, BRAVIA White Warp, BRAVIA Acid Spiral, BRAVIA Deep Purple Run, BRAVIA Razor Corridor, BRAVIA Solar Intake, BRAVIA Glass Helix, BRAVIA Chrome Pulse, BRAVIA Neon Fold
 Source: Original presets authored for this BRAVIA Launcher project.
 License: Same project-local use as BRAVIA Launcher.
+
+Bundled BRAVIA 3D tunnel visualizer
+Files: visualizer/tunnel.html, visualizer/tunnel.js
+Source: Original WebGL tunnel renderer authored for this BRAVIA Launcher project.
+License: Same project-local use as BRAVIA Launcher.

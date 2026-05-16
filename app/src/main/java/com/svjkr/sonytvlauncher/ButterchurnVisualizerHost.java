@@ -36,7 +36,8 @@ public class ButterchurnVisualizerHost extends FrameLayout {
     private static final String TAG = "BRAVIAVisualizer";
     private static final String LOCAL_SCHEME = "https";
     private static final String LOCAL_HOST = "bravia.visualizer.local";
-    private static final String START_URL = "https://bravia.visualizer.local/visualizer/index.html";
+    private static final String DEFAULT_START_URL = "https://bravia.visualizer.local/visualizer/index.html";
+    private static final String DEFAULT_ENGINE_NAME = "butterchurn";
     private static final int AUDIO_PUSH_INTERVAL_MS = 33;
     private static final int MEMORY_LOG_INTERVAL_MS = 5000;
     private static final int MAX_AUDIO_FRAME_BYTES = 4096;
@@ -47,6 +48,8 @@ public class ButterchurnVisualizerHost extends FrameLayout {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Object audioLock = new Object();
     private final ActivityManager activityManager;
+    private final String startUrl;
+    private final String engineName;
     private final Runnable audioPushRunnable = new Runnable() {
         @Override
         public void run() {
@@ -81,10 +84,16 @@ public class ButterchurnVisualizerHost extends FrameLayout {
     private boolean missingMetadataLogged;
 
     public ButterchurnVisualizerHost(Context context) {
+        this(context, DEFAULT_START_URL, DEFAULT_ENGINE_NAME);
+    }
+
+    public ButterchurnVisualizerHost(Context context, String startUrl, String engineName) {
         super(context);
         setBackgroundColor(Color.BLACK);
         setClipChildren(false);
         setClipToPadding(false);
+        this.startUrl = startUrl;
+        this.engineName = engineName;
         activityManager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
     }
 
@@ -108,8 +117,8 @@ public class ButterchurnVisualizerHost extends FrameLayout {
             webView.onResume();
             if (!loaded) {
                 loaded = true;
-                logEvent("engine_select", "butterchurn");
-                webView.loadUrl(START_URL);
+                logEvent("engine_select", engineName);
+                webView.loadUrl(startUrl);
             }
             startAudioCaptureOrSynthetic();
             startMemoryLogging();
@@ -430,7 +439,7 @@ public class ButterchurnVisualizerHost extends FrameLayout {
         }
 
         fallbackView = new WinampVisualizerView(getContext());
-        fallbackView.setSignal("butterchurn-fallback", true, 0);
+        fallbackView.setSignal(engineName + "-fallback", true, 0);
         addView(fallbackView, new LayoutParams(
                 LayoutParams.MATCH_PARENT,
                 LayoutParams.MATCH_PARENT
@@ -559,7 +568,7 @@ public class ButterchurnVisualizerHost extends FrameLayout {
                         return;
                     }
                     jsReady = true;
-                    logEvent("visualizer_engine_ready", "butterchurn");
+                    logEvent("visualizer_engine_ready", engineName);
                     scheduleAudioPush();
                 }
             });
