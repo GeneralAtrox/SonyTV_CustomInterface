@@ -1,6 +1,8 @@
 (function () {
     var bridge = window.AndroidVisualizer || null;
     var canvas = document.getElementById("tunnel");
+    var coasterCanvas = document.getElementById("coaster");
+    var coasterContext = coasterCanvas ? coasterCanvas.getContext("2d") : null;
     var presetOverlay = document.getElementById("presetOverlay");
     var presetName = document.getElementById("presetName");
     var gl = null;
@@ -60,6 +62,7 @@
         },
         {
             name: "UnConeD Neon Coaster",
+            mode: "coaster",
             shape: 0.25,
             turn: 0.36,
             twist: 0.18,
@@ -231,6 +234,21 @@
     var transitionFrom = null;
     var transitionTo = null;
     var transitionStartAt = 0;
+    var coasterVisible = false;
+    var coasterControlPoints = [
+        { x: 0.00, y: 0.18, z: 0.00 },
+        { x: 0.78, y: 0.24, z: -0.52 },
+        { x: 1.06, y: 0.72, z: -1.38 },
+        { x: 0.36, y: 1.10, z: -2.06 },
+        { x: -0.36, y: 0.16, z: -2.08 },
+        { x: -1.08, y: 0.10, z: -1.42 },
+        { x: -1.62, y: 0.62, z: -0.46 },
+        { x: -1.18, y: 0.06, z: 0.44 },
+        { x: -0.30, y: -0.10, z: 0.98 },
+        { x: 0.62, y: 0.34, z: 1.18 },
+        { x: 1.38, y: 0.06, z: 0.46 },
+        { x: 0.82, y: 0.58, z: -0.22 }
+    ];
 
     var vertexSource = "#version 300 es\n"
         + "in vec2 a_position;\n"
@@ -347,6 +365,221 @@
         setPresetOverlayVisible(paused);
     }
 
+    function isCoasterPreset() {
+        return presets[presetIndex].mode === "coaster" && coasterContext;
+    }
+
+    function setCoasterVisible(visible) {
+        if (!coasterCanvas || coasterVisible === visible) {
+            return;
+        }
+        coasterVisible = visible;
+        coasterCanvas.style.display = visible ? "block" : "none";
+        canvas.style.opacity = visible ? "0" : "1";
+        if (!visible && coasterContext) {
+            coasterContext.clearRect(0, 0, coasterCanvas.width, coasterCanvas.height);
+        }
+    }
+
+    function point(x, y, z) {
+        return { x: x, y: y, z: z };
+    }
+
+    function addPoint(a, b) {
+        return point(a.x + b.x, a.y + b.y, a.z + b.z);
+    }
+
+    function subtractPoint(a, b) {
+        return point(a.x - b.x, a.y - b.y, a.z - b.z);
+    }
+
+    function scalePoint(a, scale) {
+        return point(a.x * scale, a.y * scale, a.z * scale);
+    }
+
+    function dotPoint(a, b) {
+        return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+
+    function crossPoint(a, b) {
+        return point(
+                a.y * b.z - a.z * b.y,
+                a.z * b.x - a.x * b.z,
+                a.x * b.y - a.y * b.x
+        );
+    }
+
+    function normalizePoint(a) {
+        var length = Math.sqrt(dotPoint(a, a));
+        if (length < 0.0001) {
+            return point(0, 0, 0);
+        }
+        return scalePoint(a, 1 / length);
+    }
+
+    function wrap01(value) {
+        return value - Math.floor(value);
+    }
+
+    function catmullRom(a, b, c, d, amount) {
+        var t2 = amount * amount;
+        var t3 = t2 * amount;
+        return point(
+                0.5 * ((2 * b.x) + (-a.x + c.x) * amount + (2 * a.x - 5 * b.x + 4 * c.x - d.x) * t2 + (-a.x + 3 * b.x - 3 * c.x + d.x) * t3),
+                0.5 * ((2 * b.y) + (-a.y + c.y) * amount + (2 * a.y - 5 * b.y + 4 * c.y - d.y) * t2 + (-a.y + 3 * b.y - 3 * c.y + d.y) * t3),
+                0.5 * ((2 * b.z) + (-a.z + c.z) * amount + (2 * a.z - 5 * b.z + 4 * c.z - d.z) * t2 + (-a.z + 3 * b.z - 3 * c.z + d.z) * t3)
+        );
+    }
+
+    function coasterCenterAt(position) {
+        var points = coasterControlPoints;
+        var scaled = wrap01(position) * points.length;
+        var index = Math.floor(scaled);
+        var amount = scaled - index;
+        var count = points.length;
+        return catmullRom(
+                points[(index + count - 1) % count],
+                points[index % count],
+                points[(index + 1) % count],
+                points[(index + 2) % count],
+                amount
+        );
+    }
+
+    function coasterTangentAt(position) {
+        return normalizePoint(subtractPoint(
+                coasterCenterAt(position + 0.002),
+                coasterCenterAt(position - 0.002)
+        ));
+    }
+
+    function coasterRailPoint(position, side) {
+        var center = coasterCenterAt(position);
+        var tangent = coasterTangentAt(position);
+        var railRight = crossPoint(tangent, point(0, 1, 0));
+        if (dotPoint(railRight, railRight) < 0.0001) {
+            railRight = crossPoint(tangent, point(0, 0, 1));
+        }
+        railRight = normalizePoint(railRight);
+        return addPoint(center, scalePoint(railRight, side * 0.085));
+    }
+
+    function coasterCamera(position) {
+        var camera = coasterCenterAt(position);
+        var lookAt = coasterCenterAt(position + 0.024);
+        camera.y += 0.055;
+        var forward = normalizePoint(subtractPoint(lookAt, camera));
+        var right = crossPoint(forward, point(0, 1, 0));
+        if (dotPoint(right, right) < 0.0001) {
+            right = point(1, 0, 0);
+        } else {
+            right = normalizePoint(right);
+        }
+        var up = normalizePoint(crossPoint(right, forward));
+        return { position: camera, forward: forward, right: right, up: up };
+    }
+
+    function projectCoasterPoint(world, camera, width, height) {
+        var relative = subtractPoint(world, camera.position);
+        var z = dotPoint(relative, camera.forward);
+        if (z < 0.055) {
+            return null;
+        }
+        var x = dotPoint(relative, camera.right);
+        var y = dotPoint(relative, camera.up);
+        var focal = Math.min(width, height) * 0.82;
+        return {
+            x: width * 0.5 + x * focal / z,
+            y: height * 0.56 - y * focal / z,
+            z: z
+        };
+    }
+
+    function coasterColor(sampleIndex, depth) {
+        var hue = (visualTimeSeconds * 18 + sampleIndex * 4.6 + audio.mid * 80) % 360;
+        var lightness = Math.max(42, Math.min(72, 58 + audio.rms * 24 - depth * 2));
+        return "hsla(" + hue + ", 92%, " + lightness + "%, 0.82)";
+    }
+
+    function drawCoasterLine(ctx, start, end, color, width, blur) {
+        if (!start || !end) {
+            return;
+        }
+        ctx.lineWidth = width;
+        ctx.strokeStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = blur;
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
+    }
+
+    function renderNeonCoaster(now) {
+        if (!coasterContext || !coasterCanvas) {
+            return;
+        }
+        var ctx = coasterContext;
+        var width = coasterCanvas.width;
+        var height = coasterCanvas.height;
+        var ridePosition = wrap01(visualTimeSeconds * 0.026);
+        var camera = coasterCamera(ridePosition);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalCompositeOperation = "source-over";
+        ctx.fillStyle = "rgb(1, 2, 6)";
+        ctx.fillRect(0, 0, width, height);
+
+        var gradient = ctx.createRadialGradient(width * 0.5, height * 0.56, 0, width * 0.5, height * 0.56, width * 0.72);
+        gradient.addColorStop(0, "rgba(30, 16, 45, 0.18)");
+        gradient.addColorStop(0.55, "rgba(0, 22, 42, 0.10)");
+        gradient.addColorStop(1, "rgba(0, 0, 0, 0.82)");
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, width, height);
+        ctx.globalCompositeOperation = "lighter";
+
+        var segments = [];
+        var samples = 210;
+        var trackAhead = 0.72;
+        var lastLeft = null;
+        var lastRight = null;
+        for (var i = 0; i <= samples; i++) {
+            var position = ridePosition + 0.018 + i * trackAhead / samples;
+            var left = projectCoasterPoint(coasterRailPoint(position, -1), camera, width, height);
+            var right = projectCoasterPoint(coasterRailPoint(position, 1), camera, width, height);
+            if (lastLeft && left) {
+                segments.push({ start: lastLeft, end: left, index: i, kind: "rail", depth: (lastLeft.z + left.z) * 0.5 });
+            }
+            if (lastRight && right) {
+                segments.push({ start: lastRight, end: right, index: i, kind: "rail", depth: (lastRight.z + right.z) * 0.5 });
+            }
+            if (i % 7 === 0 && left && right) {
+                segments.push({ start: left, end: right, index: i, kind: "tie", depth: (left.z + right.z) * 0.5 });
+            }
+            lastLeft = left;
+            lastRight = right;
+        }
+
+        segments.sort(function (a, b) { return b.depth - a.depth; });
+        for (var j = 0; j < segments.length; j++) {
+            var segment = segments[j];
+            var near = Math.max(0, Math.min(1, 1.25 / Math.max(0.14, segment.depth)));
+            var railWidth = (segment.kind === "tie" ? 0.8 : 1.15) + near * (segment.kind === "tie" ? 3.0 : 5.8);
+            var blur = 7 + near * 20 + audio.treb * 14;
+            var color = coasterColor(segment.index, segment.depth);
+            if (segment.kind === "tie") {
+                color = "rgba(170, 230, 255, " + (0.12 + near * 0.28) + ")";
+            }
+            drawCoasterLine(ctx, segment.start, segment.end, color, railWidth, blur);
+        }
+
+        ctx.globalCompositeOperation = "source-over";
+        var vignette = ctx.createRadialGradient(width * 0.5, height * 0.56, height * 0.08, width * 0.5, height * 0.56, width * 0.74);
+        vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
+        vignette.addColorStop(1, "rgba(0, 0, 0, 0.58)");
+        ctx.fillStyle = vignette;
+        ctx.fillRect(0, 0, width, height);
+    }
+
     function compileShader(type, source) {
         var shader = gl.createShader(type);
         gl.shaderSource(shader, source);
@@ -386,6 +619,10 @@
             if (gl) {
                 gl.viewport(0, 0, width, height);
             }
+        }
+        if (coasterCanvas && (coasterCanvas.width !== width || coasterCanvas.height !== height)) {
+            coasterCanvas.width = width;
+            coasterCanvas.height = height;
         }
     }
 
@@ -469,6 +706,7 @@
     function copyPreset(preset) {
         return {
             name: preset.name,
+            mode: preset.mode || "tunnel",
             shape: preset.shape,
             turn: preset.turn,
             twist: preset.twist,
@@ -556,6 +794,21 @@
         }
         if (!paused) {
             smoothAudio();
+        }
+
+        var useCoaster = isCoasterPreset();
+        setCoasterVisible(useCoaster);
+        if (useCoaster) {
+            try {
+                renderNeonCoaster(now);
+            } catch (exception) {
+                running = false;
+                safeBridge("reportError", "coaster_render_failed:" + exception.message);
+                return;
+            }
+            reportMetrics(now);
+            window.requestAnimationFrame(render);
+            return;
         }
 
         try {
