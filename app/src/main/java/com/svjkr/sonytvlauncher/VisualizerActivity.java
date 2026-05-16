@@ -110,23 +110,34 @@ public class VisualizerActivity extends Activity {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (event != null
-                && event.getAction() == KeyEvent.ACTION_DOWN
-                && isPresetSelectionKey(event.getKeyCode())) {
-            if (event.getRepeatCount() > 0) {
+                && event.getAction() == KeyEvent.ACTION_DOWN) {
+            if (isPauseToggleKey(event.getKeyCode())) {
+                if (event.getRepeatCount() > 0) {
+                    return true;
+                }
+                toggleVisualizerPaused();
                 return true;
             }
-            selectVisualizerPreset(event.getKeyCode());
-            return true;
+            if (isPresetSelectionKey(event.getKeyCode())) {
+                if (event.getRepeatCount() > 0) {
+                    return true;
+                }
+                selectVisualizerPreset(event.getKeyCode());
+                return true;
+            }
         }
         return super.dispatchKeyEvent(event);
     }
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_BACK
-                || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
-                || keyCode == KeyEvent.KEYCODE_ENTER) {
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
             finish();
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                || keyCode == KeyEvent.KEYCODE_ENTER) {
+            toggleVisualizerPaused();
             return true;
         }
         return super.onKeyDown(keyCode, event);
@@ -163,6 +174,17 @@ public class VisualizerActivity extends Activity {
                 || keyCode == KeyEvent.KEYCODE_DPAD_DOWN
                 || keyCode == KeyEvent.KEYCODE_DPAD_LEFT
                 || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT;
+    }
+
+    private boolean isPauseToggleKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                || keyCode == KeyEvent.KEYCODE_ENTER;
+    }
+
+    private void toggleVisualizerPaused() {
+        if (butterchurnHost != null && butterchurnHost.togglePaused()) {
+            return;
+        }
     }
 
     private void selectVisualizerPreset(int keyCode) {

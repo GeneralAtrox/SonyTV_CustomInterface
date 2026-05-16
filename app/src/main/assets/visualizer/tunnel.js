@@ -1,9 +1,12 @@
 (function () {
     var bridge = window.AndroidVisualizer || null;
     var canvas = document.getElementById("tunnel");
+    var presetOverlay = document.getElementById("presetOverlay");
+    var presetName = document.getElementById("presetName");
     var gl = null;
     var program = null;
     var running = false;
+    var paused = false;
     var lastFrameAt = 0;
     var metricsStartAt = 0;
     var warmupUntil = 0;
@@ -326,6 +329,24 @@
         }
     }
 
+    function setPresetOverlayVisible(visible) {
+        if (!presetOverlay) {
+            return;
+        }
+        if (visible) {
+            presetOverlay.classList.add("visible");
+        } else {
+            presetOverlay.classList.remove("visible");
+        }
+    }
+
+    function updatePresetOverlay() {
+        if (presetName) {
+            presetName.textContent = presets[presetIndex].name || "Unknown preset";
+        }
+        setPresetOverlayVisible(paused);
+    }
+
     function compileShader(type, source) {
         var shader = gl.createShader(type);
         gl.shaderSource(shader, source);
@@ -524,14 +545,18 @@
         if (lastFrameAt > 0) {
             deltaMs = now - lastFrameAt;
             frameTimes.push(deltaMs);
-            visualTimeSeconds += Math.max(0, Math.min(maxVisualDeltaMs, deltaMs)) * 0.001 * globalTimeScale;
+            if (!paused) {
+                visualTimeSeconds += Math.max(0, Math.min(maxVisualDeltaMs, deltaMs)) * 0.001 * globalTimeScale;
+            }
         }
         lastFrameAt = now;
 
-        if (now - lastAudioTimestampMs > 500) {
+        if (!paused && now - lastAudioTimestampMs > 500) {
             updateSyntheticTargets(now);
         }
-        smoothAudio();
+        if (!paused) {
+            smoothAudio();
+        }
 
         try {
             gl.useProgram(program);
@@ -576,6 +601,13 @@
         transitionTo = copyPreset(presets[nextIndex]);
         transitionStartAt = performance.now();
         presetIndex = nextIndex;
+        updatePresetOverlay();
+    }
+
+    function togglePaused() {
+        paused = !paused;
+        updatePresetOverlay();
+        safeBridge("reportEvent", paused ? "visualizer_paused" : "visualizer_resumed");
     }
 
     function initGeometry() {
@@ -636,6 +668,7 @@
             lastFrameAt = 0;
             visualTimeSeconds = 0;
             updateSyntheticTargets(now);
+            updatePresetOverlay();
             window.requestAnimationFrame(render);
             safeBridge("reportReady");
         } catch (exception) {
@@ -657,9 +690,13 @@
                 safeBridge("reportAudioFrameConsumed", lastAudioTimestampMs);
             }
         },
-        selectPreset: selectPreset
+        selectPreset: selectPreset,
+        togglePaused: togglePaused
     };
 
+    window.addEventListener("click", function () {
+        togglePaused();
+    });
     window.addEventListener("resize", resize);
     init();
 }());

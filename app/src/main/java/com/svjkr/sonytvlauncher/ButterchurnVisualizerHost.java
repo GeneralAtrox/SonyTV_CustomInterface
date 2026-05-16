@@ -211,6 +211,18 @@ public class ButterchurnVisualizerHost extends FrameLayout {
         return true;
     }
 
+    public boolean togglePaused() {
+        if (destroyed || webView == null || fallbackView != null || !jsReady) {
+            return false;
+        }
+        logEvent("visualizer_pause_toggle", "center");
+        webView.evaluateJavascript(
+                "window.braviaVisualizer&&window.braviaVisualizer.togglePaused&&window.braviaVisualizer.togglePaused();",
+                null
+        );
+        return true;
+    }
+
     private void ensureWebView() {
         if (webView != null) {
             return;
