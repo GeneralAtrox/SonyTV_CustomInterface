@@ -13,18 +13,29 @@ import android.media.audiofx.Visualizer;
 import android.os.SystemClock;
 import android.view.View;
 
+import java.util.Arrays;
+
 public class WinampVisualizerView extends View {
+    private static final int SPECTRUM_HISTORY_SIZE = 512;
+    private static final float SPECTRUM_PEAK_PERCENTILE = 0.99f;
+
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path wavePath = new Path();
     private final float[] fallbackBars = new float[64];
+    private final float[] spectrumHistory = new float[SPECTRUM_HISTORY_SIZE];
+    private final float[] spectrumPercentileScratch = new float[SPECTRUM_HISTORY_SIZE];
     private byte[] fftData;
     private byte[] waveformData;
     private Visualizer visualizer;
     private int signalSeed = 9;
+    private int spectrumHistoryCursor;
+    private int spectrumHistoryCount;
+    private int spectrumHistoryUpdates;
     private boolean running;
     private boolean playing = true;
     private boolean audioLinked;
     private int progressPercent;
+    private float spectrumCeiling = 0.18f;
 
     public WinampVisualizerView(Context context) {
         super(context);
@@ -258,12 +269,42 @@ public class WinampVisualizerView extends View {
         }
 
         float average = count == 0 ? 0f : sum / count;
-        float target = Math.min(1f, (average * 0.70f + peak * 0.30f) * 2.35f);
+        float rawAmount = average * 0.70f + peak * 0.30f;
+        float normalized = rawAmount / updateSpectrumCeiling(rawAmount);
+        float target = Math.min(1f, (float) Math.pow(normalized, 1.45f));
         int smoothIndex = index % fallbackBars.length;
         float previous = fallbackBars[smoothIndex];
         float smoothing = target > previous ? 0.62f : 0.24f;
         fallbackBars[smoothIndex] = previous + (target - previous) * smoothing;
         return Math.max(0.04f, fallbackBars[smoothIndex]);
+    }
+
+    private float updateSpectrumCeiling(float rawAmount) {
+        spectrumHistory[spectrumHistoryCursor] = rawAmount;
+        spectrumHistoryCursor = (spectrumHistoryCursor + 1) % spectrumHistory.length;
+        spectrumHistoryCount = Math.min(spectrumHistory.length, spectrumHistoryCount + 1);
+        spectrumHistoryUpdates++;
+
+        if (spectrumHistoryCount < 32) {
+            float warmupCeiling = Math.max(0.12f, rawAmount * 2.0f);
+            spectrumCeiling += (warmupCeiling - spectrumCeiling) * 0.10f;
+            return Math.max(0.08f, spectrumCeiling);
+        }
+
+        if ((spectrumHistoryUpdates & 63) != 0) {
+            return Math.max(0.08f, spectrumCeiling);
+        }
+
+        System.arraycopy(spectrumHistory, 0, spectrumPercentileScratch, 0, spectrumHistoryCount);
+        Arrays.sort(spectrumPercentileScratch, 0, spectrumHistoryCount);
+        int peakIndex = Math.min(
+                spectrumHistoryCount - 1,
+                Math.round((spectrumHistoryCount - 1) * SPECTRUM_PEAK_PERCENTILE)
+        );
+        float percentileCeiling = Math.max(0.08f, spectrumPercentileScratch[peakIndex]);
+        float adjustment = percentileCeiling > spectrumCeiling ? 0.28f : 0.035f;
+        spectrumCeiling += (percentileCeiling - spectrumCeiling) * adjustment;
+        return Math.max(0.08f, spectrumCeiling);
     }
 
     private float frequencyCurve(float position) {
