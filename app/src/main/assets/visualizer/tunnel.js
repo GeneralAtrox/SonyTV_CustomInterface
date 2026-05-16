@@ -30,10 +30,11 @@
             speed: 1.20,
             ribs: 2.30,
             spokes: 14.0,
-            beam: 0.24,
-            colorA: [0.00, 0.92, 1.00],
-            colorB: [1.00, 0.12, 0.82],
-            colorC: [1.00, 0.94, 0.35]
+            beam: 0.22,
+            intensity: 0.72,
+            colorA: [0.00, 0.58, 0.88],
+            colorB: [0.72, 0.08, 0.58],
+            colorC: [0.95, 0.52, 0.10]
         },
         {
             shape: 1,
@@ -42,10 +43,11 @@
             speed: 1.28,
             ribs: 2.10,
             spokes: 7.0,
-            beam: 0.32,
-            colorA: [0.10, 1.00, 0.55],
-            colorB: [0.08, 0.40, 1.00],
-            colorC: [1.00, 0.22, 0.08]
+            beam: 0.28,
+            intensity: 0.76,
+            colorA: [0.04, 0.72, 0.32],
+            colorB: [0.04, 0.20, 0.72],
+            colorC: [0.90, 0.18, 0.04]
         },
         {
             shape: 0,
@@ -54,10 +56,11 @@
             speed: 1.05,
             ribs: 3.45,
             spokes: 22.0,
-            beam: 0.22,
-            colorA: [0.92, 0.20, 1.00],
-            colorB: [0.05, 0.95, 0.78],
-            colorC: [0.95, 0.95, 1.00]
+            beam: 0.20,
+            intensity: 0.70,
+            colorA: [0.56, 0.10, 0.82],
+            colorB: [0.02, 0.64, 0.50],
+            colorC: [0.82, 0.68, 0.24]
         }
     ];
 
@@ -118,26 +121,32 @@
         + "    float wallCoord = mix(angle, squareWallCoord(p) * 0.5 + 0.5, u_motion.x);\n"
         + "    float twist = depth * 0.030 * u_motion.z;\n"
         + "    wallCoord += twist;\n"
-        + "    float ringWidth = 0.070 + u_audio.y * 0.026;\n"
-        + "    float spokeWidth = 0.045 + u_audio.w * 0.018;\n"
+        + "    wallCoord += sin(depth * 0.31 + wallCoord * TAU * 3.0 + travel * 0.22) * 0.010 * u_motion.z;\n"
+        + "    float ringWidth = 0.044 + u_audio.y * 0.014;\n"
+        + "    float spokeWidth = 0.026 + u_audio.w * 0.010;\n"
         + "    float rings = lineRepeat(depth * u_grid.x, ringWidth);\n"
         + "    float spokes = lineRepeat(wallCoord * u_grid.y, spokeWidth);\n"
-        + "    float lanes = lineRepeat((wallCoord + depth * 0.035) * max(2.0, u_grid.y * 0.33), 0.026);\n"
-        + "    float centerRay = pow(max(0.0, 1.0 - radius * 2.6), 3.2) * (0.35 + u_audio.z * 0.80);\n"
-        + "    float strobe = pow(lineRepeat(depth * (u_grid.x * 0.52), 0.085), 2.0) * u_grid.z;\n"
-        + "    float grid = saturate(rings * 0.92 + spokes * 0.76 + lanes * 0.42 + strobe * 0.55);\n"
+        + "    float lanes = lineRepeat((wallCoord + depth * 0.035) * max(2.0, u_grid.y * 0.33), 0.014);\n"
+        + "    float centerRay = pow(max(0.0, 1.0 - radius * 2.6), 3.2) * (0.22 + u_audio.z * 0.42);\n"
+        + "    float strobe = pow(lineRepeat(depth * (u_grid.x * 0.52), 0.060), 2.0) * u_grid.z;\n"
+        + "    float grid = saturate(rings * 0.74 + spokes * 0.54 + lanes * 0.24 + strobe * 0.32);\n"
         + "    float edge = smoothstep(0.04, 0.86, radius) * (1.0 - smoothstep(1.35, 2.1, radius));\n"
-        + "    float fog = 0.32 + 0.68 * (1.0 - smoothstep(8.0, 34.0, depth));\n"
-        + "    float glow = (grid * 1.85 + strobe * 0.35) * edge * fog * (1.15 + u_audio.x * 2.20);\n"
+        + "    float fog = 0.18 + 0.82 * (1.0 - smoothstep(8.0, 34.0, depth));\n"
+        + "    float glow = (grid * 1.08 + strobe * 0.18) * edge * fog * (0.72 + u_audio.x * 0.86) * u_grid.w;\n"
         + "    vec3 tunnelColor = mix(u_colorA, u_colorB, saturate(sin(depth * 0.17 + wallCoord * TAU + u_time * 0.25) * 0.5 + 0.5));\n"
-        + "    tunnelColor = mix(tunnelColor, u_colorC, rings * (0.22 + u_audio.y * 0.28));\n"
-        + "    float wallWash = edge * fog * (0.13 + 0.08 * sin(depth * 0.45 + wallCoord * TAU));\n"
+        + "    tunnelColor = mix(tunnelColor, u_colorC, rings * (0.14 + u_audio.y * 0.18));\n"
+        + "    float wallTexture = sin(depth * 0.44 + wallCoord * TAU * 2.0 + sin(depth * 0.12) * 1.6) * 0.5 + 0.5;\n"
+        + "    float wallWash = edge * fog * (0.060 + 0.070 * wallTexture + 0.040 * u_audio.y) * u_grid.w;\n"
+        + "    float panel = smoothstep(0.48, 0.94, sin(floor(wallCoord * u_grid.y) * 1.7 + floor(depth * 0.42) * 1.3 + travel * 0.24) * 0.5 + 0.5);\n"
+        + "    vec3 panelColor = mix(u_colorA, u_colorB, panel);\n"
         + "    vec3 color = tunnelColor * (glow + wallWash);\n"
-        + "    color += u_colorC * centerRay * fog * 1.65;\n"
-        + "    color += u_colorA * pow(glow, 1.55) * (0.95 + u_audio.w * 0.85);\n"
-        + "    color += vec3(0.010, 0.018, 0.032) * (1.0 - radius * 0.12);\n"
-        + "    color *= 1.0 + 0.18 * sin(depth * 0.9 + travel * 0.45);\n"
-        + "    outColor = vec4(pow(max(color, vec3(0.0)), vec3(0.72)), 1.0);\n"
+        + "    color += panelColor * panel * edge * fog * (0.040 + 0.045 * u_audio.x) * u_grid.w;\n"
+        + "    color += u_colorC * centerRay * fog * (0.46 + u_audio.z * 0.26) * u_grid.w;\n"
+        + "    color += u_colorA * pow(glow, 1.65) * (0.28 + u_audio.w * 0.34);\n"
+        + "    color += vec3(0.004, 0.007, 0.014) * (1.0 - radius * 0.10);\n"
+        + "    color *= 1.0 + 0.12 * sin(depth * 0.9 + travel * 0.45);\n"
+        + "    color *= 1.0 - smoothstep(1.15, 2.05, radius) * 0.38;\n"
+        + "    outColor = vec4(pow(max(color, vec3(0.0)), vec3(0.92)), 1.0);\n"
         + "}\n";
 
     var locations = {};
@@ -277,7 +286,7 @@
         gl.uniform1f(locations.time, now * 0.001);
         gl.uniform4f(locations.audio, audio.rms, audio.bass, audio.mid, audio.treb);
         gl.uniform4f(locations.motion, preset.shape, preset.turn, preset.twist, preset.speed);
-        gl.uniform4f(locations.grid, preset.ribs, preset.spokes, preset.beam, 0.0);
+        gl.uniform4f(locations.grid, preset.ribs, preset.spokes, preset.beam, preset.intensity);
         gl.uniform3f(locations.colorA, preset.colorA[0], preset.colorA[1], preset.colorA[2]);
         gl.uniform3f(locations.colorB, preset.colorB[0], preset.colorB[1], preset.colorB[2]);
         gl.uniform3f(locations.colorC, preset.colorC[0], preset.colorC[1], preset.colorC[2]);
