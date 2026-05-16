@@ -11,6 +11,7 @@
     var presetIndex = 0;
     var audioSize = 1024;
     var lastAudioTimestampMs = 0;
+    var transitionDurationMs = 950;
     var audio = {
         rms: 0.10,
         bass: 0.10,
@@ -63,6 +64,10 @@
             colorC: [0.82, 0.68, 0.24]
         }
     ];
+    var displayedPreset = copyPreset(presets[presetIndex]);
+    var transitionFrom = null;
+    var transitionTo = null;
+    var transitionStartAt = 0;
 
     var vertexSource = "#version 300 es\n"
         + "in vec2 a_position;\n"
@@ -280,8 +285,64 @@
         frameTimes = [];
     }
 
+    function copyPreset(preset) {
+        return {
+            shape: preset.shape,
+            turn: preset.turn,
+            twist: preset.twist,
+            speed: preset.speed,
+            ribs: preset.ribs,
+            spokes: preset.spokes,
+            beam: preset.beam,
+            intensity: preset.intensity,
+            colorA: preset.colorA.slice(),
+            colorB: preset.colorB.slice(),
+            colorC: preset.colorC.slice()
+        };
+    }
+
+    function lerp(from, to, amount) {
+        return from + (to - from) * amount;
+    }
+
+    function smoothstepValue(amount) {
+        var t = Math.max(0, Math.min(1, amount));
+        return t * t * (3 - 2 * t);
+    }
+
+    function lerpColor(output, from, to, amount) {
+        output[0] = lerp(from[0], to[0], amount);
+        output[1] = lerp(from[1], to[1], amount);
+        output[2] = lerp(from[2], to[2], amount);
+    }
+
+    function updateDisplayedPreset(now) {
+        if (!transitionFrom || !transitionTo) {
+            return displayedPreset;
+        }
+
+        var amount = smoothstepValue((now - transitionStartAt) / transitionDurationMs);
+        displayedPreset.shape = lerp(transitionFrom.shape, transitionTo.shape, amount);
+        displayedPreset.turn = lerp(transitionFrom.turn, transitionTo.turn, amount);
+        displayedPreset.twist = lerp(transitionFrom.twist, transitionTo.twist, amount);
+        displayedPreset.speed = lerp(transitionFrom.speed, transitionTo.speed, amount);
+        displayedPreset.ribs = lerp(transitionFrom.ribs, transitionTo.ribs, amount);
+        displayedPreset.spokes = lerp(transitionFrom.spokes, transitionTo.spokes, amount);
+        displayedPreset.beam = lerp(transitionFrom.beam, transitionTo.beam, amount);
+        displayedPreset.intensity = lerp(transitionFrom.intensity, transitionTo.intensity, amount);
+        lerpColor(displayedPreset.colorA, transitionFrom.colorA, transitionTo.colorA, amount);
+        lerpColor(displayedPreset.colorB, transitionFrom.colorB, transitionTo.colorB, amount);
+        lerpColor(displayedPreset.colorC, transitionFrom.colorC, transitionTo.colorC, amount);
+
+        if (amount >= 1) {
+            transitionFrom = null;
+            transitionTo = null;
+        }
+        return displayedPreset;
+    }
+
     function applyPresetUniforms(now) {
-        var preset = presets[presetIndex];
+        var preset = updateDisplayedPreset(now);
         gl.uniform2f(locations.resolution, canvas.width, canvas.height);
         gl.uniform1f(locations.time, now * 0.001);
         gl.uniform4f(locations.audio, audio.rms, audio.bass, audio.mid, audio.treb);
@@ -334,13 +395,23 @@
     }
 
     function selectPreset(direction) {
+        var nextIndex = presetIndex;
         if (direction === "previous") {
-            presetIndex = (presetIndex + presets.length - 1) % presets.length;
+            nextIndex = (presetIndex + presets.length - 1) % presets.length;
         } else if (direction === "next") {
-            presetIndex = (presetIndex + 1) % presets.length;
+            nextIndex = (presetIndex + 1) % presets.length;
         } else if (direction === "random") {
-            presetIndex = randomPresetIndex();
+            nextIndex = randomPresetIndex();
         }
+
+        if (nextIndex === presetIndex) {
+            return;
+        }
+        updateDisplayedPreset(performance.now());
+        transitionFrom = copyPreset(displayedPreset);
+        transitionTo = copyPreset(presets[nextIndex]);
+        transitionStartAt = performance.now();
+        presetIndex = nextIndex;
     }
 
     function initGeometry() {
