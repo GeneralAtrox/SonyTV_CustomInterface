@@ -235,6 +235,8 @@
     var transitionTo = null;
     var transitionStartAt = 0;
     var coasterVisible = false;
+    var coasterMaxWidth = 720;
+    var coasterMaxHeight = 405;
     var coasterControlPoints = [
         { x: 0.00, y: 0.18, z: 0.00 },
         { x: 0.78, y: 0.24, z: -0.52 },
@@ -496,23 +498,99 @@
     }
 
     function coasterColor(sampleIndex, depth) {
-        var hue = (visualTimeSeconds * 18 + sampleIndex * 4.6 + audio.mid * 80) % 360;
-        var lightness = Math.max(42, Math.min(72, 58 + audio.rms * 24 - depth * 2));
-        return "hsla(" + hue + ", 92%, " + lightness + "%, 0.82)";
+        var hue = (visualTimeSeconds * 10 + sampleIndex * 2.7 + audio.mid * 38) % 360;
+        var lightness = Math.max(34, Math.min(60, 44 + audio.rms * 12 + (1 - depth) * 12));
+        return "hsla(" + hue + ", 84%, " + lightness + "%, 0.78)";
     }
 
-    function drawCoasterLine(ctx, start, end, color, width, blur) {
+    function drawCoasterLine(ctx, start, end, color, width, glowWidth) {
         if (!start || !end) {
             return;
         }
-        ctx.lineWidth = width;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 0.20;
+        ctx.lineWidth = width + glowWidth;
         ctx.strokeStyle = color;
-        ctx.shadowColor = color;
-        ctx.shadowBlur = blur;
         ctx.beginPath();
         ctx.moveTo(start.x, start.y);
         ctx.lineTo(end.x, end.y);
         ctx.stroke();
+        ctx.globalAlpha = 0.86;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+    }
+
+    function drawCoasterPath(ctx, points, startIndex, endIndex, color, width, glowWidth) {
+        if (endIndex - startIndex < 1) {
+            return;
+        }
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 0.17;
+        ctx.lineWidth = width + glowWidth;
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(points[startIndex].x, points[startIndex].y);
+        for (var i = startIndex + 1; i <= endIndex; i++) {
+            ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 0.88;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        ctx.moveTo(points[startIndex].x, points[startIndex].y);
+        for (var j = startIndex + 1; j <= endIndex; j++) {
+            ctx.lineTo(points[j].x, points[j].y);
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+    }
+
+    function smootherStep(amount) {
+        var t = Math.max(0, Math.min(1, amount));
+        return t * t * t * (t * (t * 6 - 15) + 10);
+    }
+
+    function coasterRideSample(progress, width, height, time) {
+        var far = smootherStep(progress);
+        var near = 1 - progress;
+        var curve = Math.sin(time * 0.40 + progress * 3.1) * 0.22
+                + Math.sin(time * 0.18 + progress * 7.2 + 1.3) * 0.07;
+        var lift = Math.sin(time * 0.30 + progress * 4.4 + 0.6) * 0.11
+                + Math.sin(time * 0.15 + progress * 9.0) * 0.05;
+        var bank = (Math.sin(time * 0.34 + progress * 4.8) * 0.62
+                + Math.sin(time * 0.16 + progress * 8.4 + 1.8) * 0.18) * far;
+        var centerX = width * (0.5 + curve * far);
+        var centerY = height * (1.08 - far * 0.70 + lift * far);
+        var trackWidth = width * (0.62 * Math.pow(near, 1.80) + 0.030);
+        var railX = Math.cos(bank) * trackWidth * 0.5;
+        var railY = Math.sin(bank) * trackWidth * 0.5;
+        return {
+            center: { x: centerX, y: centerY, z: progress },
+            left: { x: centerX - railX, y: centerY - railY, z: progress },
+            right: { x: centerX + railX, y: centerY + railY, z: progress },
+            bank: bank
+        };
+    }
+
+    function drawCoasterPointGlow(ctx, point, color, radius) {
+        ctx.globalAlpha = 0.20;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, radius * 2.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 0.86;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
     }
 
     function renderNeonCoaster(now) {
@@ -522,60 +600,94 @@
         var ctx = coasterContext;
         var width = coasterCanvas.width;
         var height = coasterCanvas.height;
-        var ridePosition = wrap01(visualTimeSeconds * 0.026);
-        var camera = coasterCamera(ridePosition);
+        var ridePosition = visualTimeSeconds * 0.58;
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalCompositeOperation = "source-over";
         ctx.fillStyle = "rgb(1, 2, 6)";
         ctx.fillRect(0, 0, width, height);
 
-        var gradient = ctx.createRadialGradient(width * 0.5, height * 0.56, 0, width * 0.5, height * 0.56, width * 0.72);
-        gradient.addColorStop(0, "rgba(30, 16, 45, 0.18)");
-        gradient.addColorStop(0.55, "rgba(0, 22, 42, 0.10)");
+        var gradient = ctx.createRadialGradient(width * 0.5, height * 0.42, 0, width * 0.5, height * 0.46, width * 0.78);
+        gradient.addColorStop(0, "rgba(14, 20, 46, 0.22)");
+        gradient.addColorStop(0.55, "rgba(0, 24, 42, 0.12)");
         gradient.addColorStop(1, "rgba(0, 0, 0, 0.82)");
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, width, height);
         ctx.globalCompositeOperation = "lighter";
 
-        var segments = [];
-        var samples = 210;
-        var trackAhead = 0.72;
-        var lastLeft = null;
-        var lastRight = null;
+        var samples = 42;
+        var leftPoints = [];
+        var rightPoints = [];
         for (var i = 0; i <= samples; i++) {
-            var position = ridePosition + 0.018 + i * trackAhead / samples;
-            var left = projectCoasterPoint(coasterRailPoint(position, -1), camera, width, height);
-            var right = projectCoasterPoint(coasterRailPoint(position, 1), camera, width, height);
-            if (lastLeft && left) {
-                segments.push({ start: lastLeft, end: left, index: i, kind: "rail", depth: (lastLeft.z + left.z) * 0.5 });
+            var progress = i / samples;
+            var sample = coasterRideSample(progress, width, height, ridePosition);
+            leftPoints.push(sample.left);
+            rightPoints.push(sample.right);
+            if (i > 0 && i % 11 === 0) {
+                var rayColor = "rgba(58, 190, 255, " + (0.04 + audio.treb * 0.07) + ")";
+                drawCoasterLine(
+                        ctx,
+                        { x: width * 0.5, y: height * 1.04, z: 0 },
+                        sample.center,
+                        rayColor,
+                        0.8,
+                        2.2
+                );
             }
-            if (lastRight && right) {
-                segments.push({ start: lastRight, end: right, index: i, kind: "rail", depth: (lastRight.z + right.z) * 0.5 });
+        }
+
+        var farStart = Math.floor(samples * 0.56);
+        var midStart = Math.floor(samples * 0.25);
+        var nearEnd = Math.floor(samples * 0.38);
+        var farColor = "rgba(88, 154, 255, 0.46)";
+        var midColor = "rgba(42, 224, 226, 0.58)";
+        var nearColor = coasterColor(4, 0.10);
+        drawCoasterPath(ctx, leftPoints, farStart, samples, farColor, 1.1, 3.4);
+        drawCoasterPath(ctx, rightPoints, farStart, samples, farColor, 1.1, 3.4);
+        drawCoasterPath(ctx, leftPoints, midStart, samples, midColor, 2.2, 5.8);
+        drawCoasterPath(ctx, rightPoints, midStart, samples, midColor, 2.2, 5.8);
+        drawCoasterPath(ctx, leftPoints, 0, nearEnd, nearColor, 5.4, 12.0);
+        drawCoasterPath(ctx, rightPoints, 0, nearEnd, nearColor, 5.4, 12.0);
+
+        var segments = [];
+        var tieCount = 14;
+        var tiePhaseOffset = visualTimeSeconds * 0.82;
+        for (var tieIndex = 0; tieIndex < tieCount; tieIndex++) {
+            var raw = wrap01(tieIndex / tieCount - tiePhaseOffset);
+            var tieProgress = Math.pow(raw, 0.84);
+            if (tieProgress < 0.025 || tieProgress > 0.98) {
+                continue;
             }
-            if (i % 7 === 0 && left && right) {
-                segments.push({ start: left, end: right, index: i, kind: "tie", depth: (left.z + right.z) * 0.5 });
-            }
-            lastLeft = left;
-            lastRight = right;
+            var tieSample = coasterRideSample(tieProgress, width, height, ridePosition);
+            segments.push({
+                start: tieSample.left,
+                end: tieSample.right,
+                index: tieIndex * 3,
+                kind: "tie",
+                depth: tieProgress
+            });
         }
 
         segments.sort(function (a, b) { return b.depth - a.depth; });
         for (var j = 0; j < segments.length; j++) {
             var segment = segments[j];
-            var near = Math.max(0, Math.min(1, 1.25 / Math.max(0.14, segment.depth)));
-            var railWidth = (segment.kind === "tie" ? 0.8 : 1.15) + near * (segment.kind === "tie" ? 3.0 : 5.8);
-            var blur = 7 + near * 20 + audio.treb * 14;
+            var near = 1 - Math.max(0, Math.min(1, segment.depth));
+            var railWidth = (segment.kind === "tie" ? 0.55 : 1.0) + Math.pow(near, 1.25) * (segment.kind === "tie" ? 4.0 : 7.4);
+            var glowWidth = (segment.kind === "tie" ? 1.4 : 3.0) + Math.pow(near, 1.35) * (segment.kind === "tie" ? 10.0 : 18.0);
             var color = coasterColor(segment.index, segment.depth);
             if (segment.kind === "tie") {
-                color = "rgba(170, 230, 255, " + (0.12 + near * 0.28) + ")";
+                color = "rgba(164, 232, 255, " + (0.10 + near * 0.32) + ")";
             }
-            drawCoasterLine(ctx, segment.start, segment.end, color, railWidth, blur);
+            drawCoasterLine(ctx, segment.start, segment.end, color, railWidth, glowWidth);
         }
 
+        var vanishing = coasterRideSample(1, width, height, ridePosition).center;
+        drawCoasterPointGlow(ctx, vanishing, "rgba(145, 226, 255, 0.78)", 1.8 + audio.treb * 3.0);
+
         ctx.globalCompositeOperation = "source-over";
-        var vignette = ctx.createRadialGradient(width * 0.5, height * 0.56, height * 0.08, width * 0.5, height * 0.56, width * 0.74);
+        var vignette = ctx.createRadialGradient(width * 0.5, height * 0.58, height * 0.08, width * 0.5, height * 0.58, width * 0.74);
         vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
-        vignette.addColorStop(1, "rgba(0, 0, 0, 0.58)");
+        vignette.addColorStop(0.70, "rgba(0, 0, 0, 0.16)");
+        vignette.addColorStop(1, "rgba(0, 0, 0, 0.62)");
         ctx.fillStyle = vignette;
         ctx.fillRect(0, 0, width, height);
     }
@@ -620,9 +732,14 @@
                 gl.viewport(0, 0, width, height);
             }
         }
-        if (coasterCanvas && (coasterCanvas.width !== width || coasterCanvas.height !== height)) {
-            coasterCanvas.width = width;
-            coasterCanvas.height = height;
+        if (coasterCanvas) {
+            var coasterScale = Math.min(1, coasterMaxWidth / width, coasterMaxHeight / height);
+            var coasterWidth = Math.max(320, Math.floor(width * coasterScale));
+            var coasterHeight = Math.max(180, Math.floor(height * coasterScale));
+            if (coasterCanvas.width !== coasterWidth || coasterCanvas.height !== coasterHeight) {
+                coasterCanvas.width = coasterWidth;
+                coasterCanvas.height = coasterHeight;
+            }
         }
     }
 
