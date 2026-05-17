@@ -87,6 +87,7 @@
     var avsStackVertices = new Float32Array(480 * 6 * 6);
     var avsStackPointScratch = new Float32Array(6);
     var avsStackPreviousScratch = new Float32Array(6);
+    var avsStackBaseScratch = { x: 0, y: 0, r: 0, d: 0 };
 
     var presets = [
         {
@@ -660,12 +661,51 @@
             h: Math.max(1, canvas.height),
             x: 0,
             y: 0,
+            r: 0,
+            d: 0,
             red: 0,
             green: 0,
             blue: 0,
+            alpha: 1,
             beatAverage: 0.18,
             lastBeatAt: 0
         };
+    }
+
+    function createAvsEelRenderer(kind, settings, sampleCount, drawMode, lineMode, colors, texer) {
+        var suite = avsEel.compileSuite(settings.eel || {});
+        var scope = suite.createScope(createAvsInitialState(sampleCount));
+        var slots = suite.slots(["n", "w", "h", "i", "x", "y", "r", "d", "red", "green", "blue", "alpha"]);
+        suite.init.run(scope, avsEelHost());
+        sampleCount = normalizeAvsSampleCount(suite.getSlot(scope, slots.n), sampleCount);
+        return {
+            kind: kind,
+            suite: suite,
+            scope: scope,
+            slots: slots,
+            sampleCount: sampleCount,
+            drawMode: drawMode || "lines",
+            lineMode: cloneAvsLineMode(lineMode),
+            colors: colors || [],
+            texer: cloneAvsTexer(texer),
+            hasColorSlots: slots.red >= 0 || slots.green >= 0 || slots.blue >= 0,
+            hasAlphaSlot: slots.alpha >= 0
+        };
+    }
+
+    function cloneAvsTexer(settings) {
+        if (!settings) {
+            return null;
+        }
+        return {
+            resourceId: Math.max(0, Math.round(settings.resourceId || 0)),
+            size: Math.max(5, Math.min(30, Math.round(settings.size || 10))),
+            intensity: clamp(settings.intensity == null ? 0.55 : settings.intensity, 0.1, 1.4)
+        };
+    }
+
+    function createAvsColor(rawColor) {
+        return { raw: rawColor == null ? 0xffffff : rawColor };
     }
 
     function resetAvsStackRuntime() {
@@ -698,6 +738,7 @@
             fadeAlpha: definition.fastBrightness && definition.fastBrightness.operation === "halve" ? 0.5 : 0.10,
             renderers: []
         };
+        var pendingTexer = null;
 
         for (var index = 0; index < flattened.length; index++) {
             var effect = flattened[index];
@@ -705,24 +746,40 @@
                 lineMode = cloneAvsLineMode(effect.settings);
             } else if (effect.type === "fastBrightness") {
                 runtime.fadeAlpha = effect.settings && effect.settings.operation === "halve" ? 0.5 : runtime.fadeAlpha;
+            } else if (effect.type === "texer" || effect.type === "texer2") {
+                pendingTexer = effect.settings || {};
+            } else if (effect.type === "bufferBlit") {
+                runtime.renderers.push({
+                    kind: "bufferBlit",
+                    settings: effect.settings || {}
+                });
+            } else if (effect.type === "colorFade") {
+                runtime.renderers.push({
+                    kind: "colorFade",
+                    settings: effect.settings || {}
+                });
+            } else if (effect.type === "oscilloscope") {
+                runtime.renderers.push({
+                    kind: "oscilloscope",
+                    sampleCount: 160,
+                    lineMode: cloneAvsLineMode(lineMode),
+                    colors: [createAvsColor(0x66f7ff)],
+                    texer: null
+                });
+            } else if (effect.type === "dotFountain" && effect.settings && effect.settings.eel) {
+                runtime.renderers.push(createAvsEelRenderer("dotFountain", effect.settings, 180, "points",
+                        lineMode, [createAvsColor(effect.settings.colorRaw)], pendingTexer));
+                pendingTexer = null;
+            } else if (effect.type === "renderState" && effect.settings && effect.settings.eel) {
+                runtime.renderers.push(createAvsEelRenderer("renderState", effect.settings, 0, "points",
+                        lineMode, [createAvsColor(0x8af6ff)], pendingTexer));
+                pendingTexer = null;
             } else if (effect.type === "superScope" && effect.settings && effect.settings.eel) {
                 var settings = effect.settings;
-                var suite = avsEel.compileSuite(settings.eel);
-                var sampleCount = normalizeAvsSampleCount(settings.sampleCount, 64);
-                var scope = suite.createScope(createAvsInitialState(sampleCount));
-                var slots = suite.slots(["n", "w", "h", "i", "x", "y", "red", "green", "blue"]);
-                suite.init.run(scope, avsEelHost());
-                sampleCount = normalizeAvsSampleCount(suite.getSlot(scope, slots.n), sampleCount);
-                runtime.renderers.push({
-                    suite: suite,
-                    scope: scope,
-                    slots: slots,
-                    sampleCount: sampleCount,
-                    drawMode: settings.drawMode || "lines",
-                    lineMode: cloneAvsLineMode(lineMode),
-                    colors: settings.colors || [],
-                    hasColorSlots: slots.red >= 0 || slots.green >= 0 || slots.blue >= 0
-                });
+                runtime.renderers.push(createAvsEelRenderer("superScope", settings,
+                        normalizeAvsSampleCount(settings.sampleCount, 64),
+                        settings.drawMode || "lines", lineMode, settings.colors || [], pendingTexer));
+                pendingTexer = null;
             }
         }
 
@@ -789,8 +846,8 @@
         }
     }
 
-    function ensureAvsStackVertexCapacity(sampleCount) {
-        var required = Math.max(6, sampleCount * 6) * 6;
+    function ensureAvsStackVertexCapacity(sampleCount, verticesPerPoint) {
+        var required = Math.max(6, sampleCount * (verticesPerPoint || 6)) * 6;
         if (avsStackVertices.length < required) {
             avsStackVertices = new Float32Array(required);
         }
@@ -800,18 +857,32 @@
         return ((color >>> shift) & 0xff) / 255;
     }
 
-    function readAvsStackPoint(renderer, out) {
+    function readAvsStackPoint(renderer, out, base) {
         var suite = renderer.suite;
         var scope = renderer.scope;
         var slots = renderer.slots;
-        out[0] = suite.getSlot(scope, slots.x) || 0;
-        out[1] = suite.getSlot(scope, slots.y) || 0;
+        var fallbackX = base ? base.x : 0;
+        var fallbackY = base ? base.y : 0;
+        var fallbackR = base ? base.r : 0;
+        var fallbackD = base ? base.d : Math.sqrt(fallbackX * fallbackX + fallbackY * fallbackY);
+        out[0] = slots.x >= 0 ? suite.getSlot(scope, slots.x) || 0 : fallbackX;
+        out[1] = slots.y >= 0 ? suite.getSlot(scope, slots.y) || 0 : fallbackY;
+        if (renderer.kind === "renderState" && slots.r >= 0 && slots.d >= 0 && base) {
+            var currentR = suite.getSlot(scope, slots.r) || 0;
+            var currentD = suite.getSlot(scope, slots.d) || 0;
+            var xyChanged = Math.abs(out[0] - fallbackX) + Math.abs(out[1] - fallbackY) > 0.0001;
+            var polarChanged = Math.abs(currentR - fallbackR) + Math.abs(currentD - fallbackD) > 0.0001;
+            if (!xyChanged && polarChanged) {
+                out[0] = Math.cos(currentR) * currentD;
+                out[1] = Math.sin(currentR) * currentD;
+            }
+        }
         if (renderer.hasColorSlots) {
             out[2] = clamp(suite.getSlot(scope, slots.red) || 0, 0, 1);
             out[3] = clamp(suite.getSlot(scope, slots.green) || 0, 0, 1);
             out[4] = clamp(suite.getSlot(scope, slots.blue) || 0, 0, 1);
         } else if (renderer.colors.length > 0) {
-            var color = renderer.colors[0].raw || 0xffffff;
+            var color = renderer.colors[0].raw == null ? 0xffffff : renderer.colors[0].raw;
             out[2] = avsColorComponent(color, 16);
             out[3] = avsColorComponent(color, 8);
             out[4] = avsColorComponent(color, 0);
@@ -820,11 +891,37 @@
             out[3] = 1;
             out[4] = 1;
         }
-        out[5] = Math.max(out[2], out[3], out[4]) > 0 ? 0.92 : 0;
+        out[5] = renderer.hasAlphaSlot
+                ? clamp(suite.getSlot(scope, slots.alpha) || 0, 0, 1)
+                : (Math.max(out[2], out[3], out[4]) > 0 ? 0.92 : 0);
         return out;
     }
 
     function renderAvsStackRenderer(renderer, isBeat) {
+        if (renderer.kind === "bufferBlit") {
+            renderAvsBufferBlit(renderer);
+            return;
+        }
+        if (renderer.kind === "colorFade") {
+            renderAvsColorFade(renderer);
+            return;
+        }
+        if (renderer.kind === "oscilloscope") {
+            renderAvsOscilloscopeRenderer(renderer);
+            return;
+        }
+        if (renderer.kind === "dotFountain") {
+            renderAvsDotFountainRenderer(renderer, isBeat);
+            return;
+        }
+        if (renderer.kind === "renderState") {
+            renderAvsRenderStateRenderer(renderer, isBeat);
+            return;
+        }
+        renderAvsSuperScopeRenderer(renderer, isBeat);
+    }
+
+    function prepareAvsFrameProgram(renderer, isBeat) {
         var suite = renderer.suite;
         var scope = renderer.scope;
         var slots = renderer.slots;
@@ -836,23 +933,36 @@
         if (isBeat) {
             runAvsStackProgram(suite, suite.beat, scope);
         }
+        return true;
+    }
+
+    function renderAvsSuperScopeRenderer(renderer, isBeat) {
+        var suite = renderer.suite;
+        var scope = renderer.scope;
+        var slots = renderer.slots;
+        if (!prepareAvsFrameProgram(renderer, isBeat)) {
+            return;
+        }
 
         var sampleCount = normalizeAvsSampleCount(suite.getSlot(scope, slots.n), renderer.sampleCount);
         renderer.sampleCount = sampleCount;
-        ensureAvsStackVertexCapacity(sampleCount);
+        ensureAvsStackVertexCapacity(sampleCount, renderer.texer ? 48 : 6);
 
         var vertexCount = 0;
         var hasPrevious = false;
         var step = 1 / Math.max(1, sampleCount - 1);
+        var texerStride = renderer.texer && renderer.drawMode !== "points"
+                ? Math.max(1, Math.ceil(sampleCount / 180))
+                : 1;
         for (var index = 0; index < sampleCount; index++) {
             suite.setSlot(scope, slots.i, index * step);
             if (!runAvsStackProgram(suite, suite.point, scope)) {
                 return;
             }
-            readAvsStackPoint(renderer, avsStackPointScratch);
+            readAvsStackPoint(renderer, avsStackPointScratch, null);
             if (renderer.drawMode === "points") {
-                vertexCount = addAvsPointQuadTo(avsStackVertices, vertexCount, avsStackPointScratch,
-                        renderer.lineMode.lineWidth);
+                vertexCount = addAvsStackPointTo(avsStackVertices, vertexCount, avsStackPointScratch,
+                        renderer.lineMode.lineWidth, renderer.texer);
             } else if (hasPrevious && avsStackPreviousScratch[5] > 0 && avsStackPointScratch[5] > 0) {
                 var distance = Math.abs(avsStackPreviousScratch[0] - avsStackPointScratch[0])
                         + Math.abs(avsStackPreviousScratch[1] - avsStackPointScratch[1]);
@@ -860,9 +970,151 @@
                     vertexCount = addAvsSegmentTo(avsStackVertices, vertexCount, avsStackPreviousScratch,
                             avsStackPointScratch, renderer.lineMode.lineWidth);
                 }
+                if (renderer.texer && avsStackPointScratch[5] > 0.01 && index % texerStride === 0) {
+                    vertexCount = addAvsTexerSpriteTo(avsStackVertices, vertexCount, avsStackPointScratch,
+                            renderer.texer);
+                }
             }
             copyAvsPoint(avsStackPointScratch, avsStackPreviousScratch);
             hasPrevious = true;
+        }
+        drawAvsVertices(avsStackVertices, vertexCount, renderer.lineMode.blendMode);
+    }
+
+    function drawAvsBlackFade(alpha) {
+        if (alpha <= 0) {
+            return;
+        }
+        setAvsFadeAlpha(clamp(alpha, 0, 0.92));
+        gl.bufferData(gl.ARRAY_BUFFER, avsFadeVertices, gl.STATIC_DRAW);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
+    function renderAvsBufferBlit(renderer) {
+        var mode = renderer.settings ? renderer.settings.mode : 0;
+        var alpha = mode === 1 ? 0.16 : (mode === 2 ? 0.08 : (mode === 7 ? 0.04 : 0.035));
+        drawAvsBlackFade(alpha);
+    }
+
+    function renderAvsColorFade(renderer) {
+        var mode = renderer.settings ? renderer.settings.mode : 0;
+        var alpha = mode === 1 ? 0.10 : (mode === 2 ? 0.16 : 0.07);
+        drawAvsBlackFade(alpha);
+    }
+
+    function renderAvsOscilloscopeRenderer(renderer) {
+        var sampleCount = renderer.sampleCount || 256;
+        ensureAvsStackVertexCapacity(sampleCount, renderer.texer ? 48 : 6);
+        var vertexCount = 0;
+        var color = renderer.colors && renderer.colors.length > 0 ? renderer.colors[0].raw : 0x66f7ff;
+        var previous = avsStackPreviousScratch;
+        var current = avsStackPointScratch;
+        var hasPrevious = false;
+        for (var index = 0; index < sampleCount; index++) {
+            var position = index / Math.max(1, sampleCount - 1);
+            current[0] = position * 2 - 1;
+            current[1] = getOsc(position) * (0.55 + audio.rms * 0.35);
+            current[2] = avsColorComponent(color, 16);
+            current[3] = avsColorComponent(color, 8);
+            current[4] = avsColorComponent(color, 0);
+            current[5] = 0.62 + audio.rms * 0.24;
+            if (hasPrevious) {
+                vertexCount = addAvsSegmentTo(avsStackVertices, vertexCount, previous, current,
+                        Math.max(1, renderer.lineMode.lineWidth));
+            }
+            copyAvsPoint(current, previous);
+            hasPrevious = true;
+        }
+        drawAvsVertices(avsStackVertices, vertexCount, renderer.lineMode.blendMode);
+    }
+
+    function setAvsPointInput(renderer, i, x, y, r, d, color, alpha) {
+        var suite = renderer.suite;
+        var scope = renderer.scope;
+        var slots = renderer.slots;
+        suite.setSlot(scope, slots.i, i);
+        suite.setSlot(scope, slots.x, x);
+        suite.setSlot(scope, slots.y, y);
+        suite.setSlot(scope, slots.r, r);
+        suite.setSlot(scope, slots.d, d);
+        suite.setSlot(scope, slots.red, avsColorComponent(color, 16));
+        suite.setSlot(scope, slots.green, avsColorComponent(color, 8));
+        suite.setSlot(scope, slots.blue, avsColorComponent(color, 0));
+        suite.setSlot(scope, slots.alpha, alpha);
+        avsStackBaseScratch.x = x;
+        avsStackBaseScratch.y = y;
+        avsStackBaseScratch.r = r;
+        avsStackBaseScratch.d = d;
+    }
+
+    function renderAvsDotFountainRenderer(renderer, isBeat) {
+        if (!prepareAvsFrameProgram(renderer, isBeat)) {
+            return;
+        }
+        var suite = renderer.suite;
+        var scope = renderer.scope;
+        var sampleCount = normalizeAvsSampleCount(suite.getSlot(scope, renderer.slots.n), renderer.sampleCount);
+        renderer.sampleCount = sampleCount;
+        ensureAvsStackVertexCapacity(sampleCount, renderer.texer ? 48 : 6);
+
+        var color = renderer.colors && renderer.colors.length > 0 ? renderer.colors[0].raw : 0xffffff;
+        var vertexCount = 0;
+        for (var index = 0; index < sampleCount; index++) {
+            var i = index / Math.max(1, sampleCount - 1);
+            var drift = visualTimeSeconds * (0.036 + audio.bass * 0.018);
+            var angle = (wrap01(index * 0.754877666 + visualTimeSeconds * 0.027) * 2 - 1) * Math.PI;
+            var radius = 0.10 + wrap01(index * 0.318309886 + drift * 0.35) * 0.90;
+            var y = wrap01(index * 0.61803398875 + drift) * 2 - 1;
+            var x = Math.cos(angle) * radius;
+            setAvsPointInput(renderer, i, x, y, angle, y, color, 0.80);
+            if (!runAvsStackProgram(suite, suite.point, scope)) {
+                return;
+            }
+            readAvsStackPoint(renderer, avsStackPointScratch, avsStackBaseScratch);
+            if (avsStackPointScratch[5] > 0.01) {
+                vertexCount = addAvsStackPointTo(avsStackVertices, vertexCount, avsStackPointScratch, 2,
+                        renderer.texer);
+            }
+        }
+        drawAvsVertices(avsStackVertices, vertexCount, renderer.lineMode.blendMode);
+    }
+
+    function renderAvsRenderStateRenderer(renderer, isBeat) {
+        if (!prepareAvsFrameProgram(renderer, isBeat)) {
+            return;
+        }
+        var columns = Math.max(12, Math.min(24, Math.round(canvas.width / 120)));
+        var rows = Math.max(7, Math.min(14, Math.round(canvas.height / 120)));
+        var sampleCount = columns * rows;
+        ensureAvsStackVertexCapacity(sampleCount, renderer.texer ? 48 : 6);
+
+        var suite = renderer.suite;
+        var scope = renderer.scope;
+        var color = renderer.colors && renderer.colors.length > 0 ? renderer.colors[0].raw : 0x8af6ff;
+        var vertexCount = 0;
+        for (var row = 0; row < rows; row++) {
+            var y = rows <= 1 ? 0 : (row / (rows - 1)) * 2 - 1;
+            for (var column = 0; column < columns; column++) {
+                var index = row * columns + column;
+                var i = index / Math.max(1, sampleCount - 1);
+                var x = columns <= 1 ? 0 : (column / (columns - 1)) * 2 - 1;
+                var d = Math.sqrt(x * x + y * y);
+                var r = Math.atan2(y, x);
+                setAvsPointInput(renderer, i, x, y, r, d, color, 0.46);
+                if (!runAvsStackProgram(suite, suite.point, scope)) {
+                    return;
+                }
+                readAvsStackPoint(renderer, avsStackPointScratch, avsStackBaseScratch);
+                if (avsStackPointScratch[5] > 0.01
+                        && avsStackPointScratch[0] > -1.25 && avsStackPointScratch[0] < 1.25
+                        && avsStackPointScratch[1] > -1.25 && avsStackPointScratch[1] < 1.25) {
+                    vertexCount = addAvsStackPointTo(avsStackVertices, vertexCount, avsStackPointScratch, 2,
+                            renderer.texer);
+                }
+            }
         }
         drawAvsVertices(avsStackVertices, vertexCount, renderer.lineMode.blendMode);
     }
@@ -1632,6 +1884,46 @@
         return addAvsLineQuadTo(vertices, vertexCount, x - half, y - half, x + half, y - half,
                 x - half, y + half, x + half, y + half,
                 pointValue[2], pointValue[3], pointValue[4], pointValue[5]);
+    }
+
+    function addAvsStackPointTo(vertices, vertexCount, pointValue, lineWidth, texer) {
+        if (texer) {
+            return addAvsTexerSpriteTo(vertices, vertexCount, pointValue, texer);
+        }
+        return addAvsPointQuadTo(vertices, vertexCount, pointValue, lineWidth);
+    }
+
+    function addAvsTexerSpriteTo(vertices, vertexCount, pointValue, texer) {
+        var x = Math.trunc((pointValue[0] + 1) * canvas.width * 0.5);
+        var y = Math.trunc((pointValue[1] + 1) * canvas.height * 0.5);
+        var scale = Math.max(0.75, Math.min(2.2, Math.min(canvas.width / 1280, canvas.height / 720)));
+        var radius = Math.max(4, Math.min(32,
+                Math.round((texer.size || 13) * scale * (0.92 + audio.treb * 0.16))));
+        var lineWidth = Math.max(1, Math.min(4, Math.round(radius / 6)));
+        var alpha = pointValue[5] * (texer.intensity || 0.55);
+        var r = pointValue[2];
+        var g = pointValue[3];
+        var b = pointValue[4];
+        var segments = 6;
+        var previousX = x + radius;
+        var previousY = y;
+        for (var segment = 1; segment <= segments; segment++) {
+            var angle = segment / segments * Math.PI * 2;
+            var currentX = x + Math.cos(angle) * radius;
+            var currentY = y + Math.sin(angle) * radius;
+            var dx = currentX - previousX;
+            var dy = currentY - previousY;
+            var length = Math.max(0.001, Math.sqrt(dx * dx + dy * dy));
+            var nx = -dy / length * lineWidth;
+            var ny = dx / length * lineWidth;
+            vertexCount = addAvsLineQuadTo(vertices, vertexCount,
+                    previousX + nx, previousY + ny, currentX + nx, currentY + ny,
+                    previousX - nx, previousY - ny, currentX - nx, currentY - ny,
+                    r, g, b, alpha * 0.58);
+            previousX = currentX;
+            previousY = currentY;
+        }
+        return vertexCount;
     }
 
     function drawAvsVertices(vertices, vertexCount, blendMode) {

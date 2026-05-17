@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, "..");
 const DEFAULT_PRESET_DIR = "C:\\Program Files (x86)\\Winamp\\Plugins\\AVS";
 const SIGNATURE = Buffer.from("Nullsoft AVS Preset 0.2\x1a", "binary");
 
-const SUPPORTED_EFFECT_IDS = new Set([21, 36, 40, 42, 44]);
+const SUPPORTED_EFFECT_IDS = new Set([3, 6, 15, 18, 21, 36, 37, 38, 40, 42, 43, 44]);
 const EFFECT_NAMES = new Map([
     [-2, "Effect List"],
     [0, "Effect List"],

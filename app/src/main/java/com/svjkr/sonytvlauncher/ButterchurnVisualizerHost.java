@@ -83,6 +83,7 @@ public class ButterchurnVisualizerHost extends FrameLayout {
     private boolean destroyed;
     private boolean usingSynthetic = true;
     private boolean missingMetadataLogged;
+    private String syntheticModeReason = "";
 
     public ButterchurnVisualizerHost(Context context) {
         this(context, DEFAULT_START_URL, DEFAULT_ENGINE_NAME);
@@ -322,6 +323,7 @@ public class ButterchurnVisualizerHost extends FrameLayout {
         nonTrivialFrameCount++;
         if (usingSynthetic && nonTrivialFrameCount >= 2) {
             usingSynthetic = false;
+            syntheticModeReason = "";
             logEvent("visualizer_audio_mode", "real");
         }
     }
@@ -366,8 +368,10 @@ public class ButterchurnVisualizerHost extends FrameLayout {
         if (!usingSynthetic) {
             usingSynthetic = true;
             nonTrivialFrameCount = 0;
+            syntheticModeReason = reason;
             logEvent("visualizer_audio_mode", "synthetic:" + reason);
-        } else {
+        } else if (!reason.equals(syntheticModeReason)) {
+            syntheticModeReason = reason;
             logEvent("visualizer_audio_mode", "synthetic_ready:" + reason);
         }
     }
