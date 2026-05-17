@@ -183,7 +183,9 @@
             colorC: [0.58, 0.80, 0.18]
         },
         {
-            name: "UnConeD Zero-G Maze III",
+            name: avsPresetDefinitions.zeroGMazeIII ? avsPresetDefinitions.zeroGMazeIII.displayName : "UnConeD Zero-G Maze III",
+            mode: "avs",
+            avsPresetId: "zeroGMazeIII",
             shape: 1,
             turn: 0.24,
             twist: 0.28,
@@ -636,6 +638,15 @@
     }
 
     function setAvsFadeAlpha(alpha) {
+        setAvsFadeColor(0, 0, 0, alpha);
+    }
+
+    function setAvsFadeColor(red, green, blue, alpha) {
+        for (var index = 2; index < avsFadeVertices.length; index += 6) {
+            avsFadeVertices[index] = red;
+            avsFadeVertices[index + 1] = green;
+            avsFadeVertices[index + 2] = blue;
+        }
         for (var index = 5; index < avsFadeVertices.length; index += 6) {
             avsFadeVertices[index] = alpha;
         }
@@ -753,6 +764,18 @@
                     kind: "bufferBlit",
                     settings: effect.settings || {}
                 });
+            } else if (effect.type === "clearScreen") {
+                runtime.renderers.push({
+                    kind: "clearScreen",
+                    settings: effect.settings || {},
+                    hasRendered: false
+                });
+            } else if (effect.type === "videoDelay") {
+                runtime.renderers.push({
+                    kind: "videoDelay",
+                    settings: effect.settings || {},
+                    phase: 0
+                });
             } else if (effect.type === "bump") {
                 runtime.renderers.push({
                     kind: "bump",
@@ -760,10 +783,24 @@
                     phase: 0,
                     beatDepth: 0
                 });
+            } else if (effect.type === "scatter") {
+                runtime.renderers.push({
+                    kind: "scatter",
+                    settings: effect.settings || {},
+                    seed: 0.37
+                });
             } else if (effect.type === "colorFade") {
                 runtime.renderers.push({
                     kind: "colorFade",
                     settings: effect.settings || {}
+                });
+            } else if (effect.type === "simple") {
+                runtime.renderers.push({
+                    kind: "simple",
+                    settings: effect.settings || {},
+                    sampleCount: 160,
+                    lineMode: cloneAvsLineMode(lineMode),
+                    colors: effect.settings && effect.settings.colors ? effect.settings.colors : [createAvsColor(0xffffff)]
                 });
             } else if (effect.type === "oscilloscope") {
                 runtime.renderers.push({
@@ -909,6 +946,14 @@
             renderAvsBufferBlit(renderer);
             return;
         }
+        if (renderer.kind === "clearScreen") {
+            renderAvsClearScreen(renderer);
+            return;
+        }
+        if (renderer.kind === "videoDelay") {
+            renderAvsVideoDelay(renderer, isBeat);
+            return;
+        }
         if (renderer.kind === "colorFade") {
             renderAvsColorFade(renderer);
             return;
@@ -917,8 +962,16 @@
             renderAvsBump(renderer, isBeat);
             return;
         }
+        if (renderer.kind === "scatter") {
+            renderAvsScatter(renderer);
+            return;
+        }
         if (renderer.kind === "oscilloscope") {
             renderAvsOscilloscopeRenderer(renderer);
+            return;
+        }
+        if (renderer.kind === "simple") {
+            renderAvsSimpleRenderer(renderer);
             return;
         }
         if (renderer.kind === "dotFountain") {
@@ -1016,6 +1069,70 @@
         drawAvsBlackFade(alpha);
     }
 
+    function drawAvsColorWash(color, alpha, blendMode) {
+        if (alpha <= 0) {
+            return;
+        }
+        setAvsFadeColor(avsColorComponent(color, 16), avsColorComponent(color, 8),
+                avsColorComponent(color, 0), clamp(alpha, 0, 1));
+        gl.bufferData(gl.ARRAY_BUFFER, avsFadeVertices, gl.STATIC_DRAW);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        if (blendMode === "additive") {
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        } else {
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        }
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
+    function renderAvsClearScreen(renderer) {
+        var settings = renderer.settings || {};
+        if (settings.enabled === 0 || (settings.onlyFirst && renderer.hasRendered)) {
+            return;
+        }
+        renderer.hasRendered = true;
+        var color = settings.colorRaw == null ? 0 : settings.colorRaw;
+        var additive = settings.blend === 1 || settings.blend === 2;
+        var alpha = additive ? 0.014 : (settings.blendAverage ? 0.24 : 0.86);
+        drawAvsColorWash(color, alpha, additive ? "additive" : "replace");
+    }
+
+    function renderAvsVideoDelay(renderer, isBeat) {
+        var settings = renderer.settings || {};
+        if (settings.enabled === 0) {
+            return;
+        }
+        renderer.phase = (renderer.phase || 0) + 1;
+        var delay = Math.max(1, Math.min(200, Math.round(settings.delay || 1)));
+        var beatBoost = settings.useBeats && isBeat ? 0.08 : 0;
+        drawAvsBlackFade(Math.min(0.10, 0.015 + delay / 4000 + beatBoost));
+    }
+
+    function renderAvsScatter(renderer) {
+        if (renderer.settings && renderer.settings.enabled === 0) {
+            return;
+        }
+        var count = 70;
+        ensureAvsStackVertexCapacity(count, 6);
+        var vertexCount = 0;
+        var current = avsStackPointScratch;
+        renderer.seed = wrap01((renderer.seed || 0.37) + 0.019 + audio.treb * 0.006);
+        for (var index = 0; index < count; index++) {
+            var position = wrap01(renderer.seed + index * 0.61803398875);
+            var angle = wrap01(position * 12.9898 + visualTimeSeconds * 0.021) * Math.PI * 2;
+            var radius = Math.sqrt(wrap01(position * 78.233 + renderer.seed)) * 1.35;
+            current[0] = Math.cos(angle) * radius;
+            current[1] = Math.sin(angle) * radius * canvas.width / Math.max(1, canvas.height);
+            current[2] = 0.02;
+            current[3] = 0.72 + audio.mid * 0.16;
+            current[4] = 0.88 + audio.treb * 0.10;
+            current[5] = 0.08 + audio.rms * 0.10;
+            vertexCount = addAvsStackPointTo(avsStackVertices, vertexCount, current, 1, null);
+        }
+        drawAvsVertices(avsStackVertices, vertexCount, "additive");
+    }
+
     function renderAvsBump(renderer, isBeat) {
         if (renderer.settings && renderer.settings.enabled === 0) {
             return;
@@ -1085,6 +1202,50 @@
             if (hasPrevious) {
                 vertexCount = addAvsSegmentTo(avsStackVertices, vertexCount, previous, current,
                         Math.max(1, renderer.lineMode.lineWidth));
+            }
+            copyAvsPoint(current, previous);
+            hasPrevious = true;
+        }
+        drawAvsVertices(avsStackVertices, vertexCount, renderer.lineMode.blendMode);
+    }
+
+    function renderAvsSimpleRenderer(renderer) {
+        var settings = renderer.settings || {};
+        var sampleCount = renderer.sampleCount || 128;
+        var renderMode = settings.renderMode || "solidAnalyzer";
+        var source = settings.source || (renderMode.indexOf("Scope") >= 0 ? "waveform" : "spectrum");
+        var color = renderer.colors && renderer.colors.length > 0 ? renderer.colors[0].raw : 0xffffff;
+        var lineWidth = Math.max(1, Math.min(2, renderer.lineMode && renderer.lineMode.lineWidth
+                ? renderer.lineMode.lineWidth
+                : 2));
+        ensureAvsStackVertexCapacity(sampleCount, 12);
+        var vertexCount = 0;
+        var previous = avsStackPreviousScratch;
+        var current = avsStackPointScratch;
+        var hasPrevious = false;
+        for (var index = 0; index < sampleCount; index++) {
+            var position = index / Math.max(1, sampleCount - 1);
+            var value = source === "spectrum"
+                    ? getSpec(position, 0.012, settings.channel)
+                    : getOsc(position);
+            var baselineY = settings.yPosition === 0 ? 0.54 : (settings.yPosition === 1 ? 0 : -0.08);
+            var magnitude = source === "spectrum" ? Math.min(1, value * 0.82) : value * 0.58;
+            current[0] = position * 2 - 1;
+            current[1] = baselineY + magnitude * (renderMode.indexOf("Analyzer") >= 0 ? 0.52 : 0.34);
+            current[2] = avsColorComponent(color, 16);
+            current[3] = avsColorComponent(color, 8);
+            current[4] = avsColorComponent(color, 0);
+            current[5] = 0.20 + Math.min(0.22, Math.abs(value) * 0.38 + audio.rms * 0.12);
+            if (renderMode.indexOf("solid") === 0) {
+                previous[0] = current[0];
+                previous[1] = baselineY;
+                previous[2] = current[2];
+                previous[3] = current[3];
+                previous[4] = current[4];
+                previous[5] = current[5] * 0.55;
+                vertexCount = addAvsSegmentTo(avsStackVertices, vertexCount, previous, current, lineWidth);
+            } else if (hasPrevious) {
+                vertexCount = addAvsSegmentTo(avsStackVertices, vertexCount, previous, current, lineWidth);
             }
             copyAvsPoint(current, previous);
             hasPrevious = true;

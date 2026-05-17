@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, "..");
 const DEFAULT_PRESET_DIR = "C:\\Program Files (x86)\\Winamp\\Plugins\\AVS";
 const SIGNATURE = Buffer.from("Nullsoft AVS Preset 0.2\x1a", "binary");
 
-const SUPPORTED_EFFECT_IDS = new Set([3, 6, 15, 18, 20, 21, 36, 37, 38, 40, 42, 43, 44]);
+const SUPPORTED_EFFECT_IDS = new Set([1, 3, 6, 12, 15, 18, 20, 21, 25, 33, 36, 37, 38, 40, 42, 43, 44]);
 const EFFECT_NAMES = new Map([
     [-2, "Effect List"],
     [0, "Effect List"],
@@ -37,7 +37,7 @@ const EFFECT_NAMES = new Map([
     [22, "Blitter Feedback"],
     [23, "Noise"],
     [24, "Color Reduction"],
-    [25, "Multiplexer"],
+    [25, "Clear Screen"],
     [26, "Color Clip"],
     [27, "Mirror"],
     [28, "Starfield"],
@@ -239,6 +239,10 @@ function readSizedStringAt(buffer, offset) {
     };
 }
 
+function colorToHex(color) {
+    return "#" + (color & 0xffffff).toString(16).padStart(6, "0");
+}
+
 function previewText(buffer, maxLength = 80) {
     return buffer
             .toString("latin1")
@@ -310,6 +314,48 @@ function decodeDotFountain(config) {
     return summary;
 }
 
+function decodeSimple(config) {
+    const effect = readInt32At(config, 0, 40);
+    const configuredColorCount = config.length >= 8 ? readInt32At(config, 4) : 1;
+    const colorCount = configuredColorCount > 0 && configuredColorCount <= 16 ? configuredColorCount : 0;
+    const colors = [];
+    for (let index = 0; index < colorCount && 8 + index * 4 + 4 <= config.length; index++) {
+        const color = readUInt32At(config, 8 + index * 4);
+        colors.push(colorToHex(color));
+    }
+    if (config.length === 0) {
+        colors.push("#ffffff");
+    }
+    const renderModeId = effect & 3;
+    const renderModes = ["solidAnalyzer", "lineAnalyzer", "lineScope", "solidScope"];
+    return {
+        effect,
+        renderMode: renderModes[renderModeId] || "unknown",
+        source: renderModeId > 1 ? "waveform" : "spectrum",
+        colors,
+        ints: previewInts(config)
+    };
+}
+
+function decodeClearScreen(config) {
+    const colorRaw = readUInt32At(config, 4);
+    return {
+        enabled: readInt32At(config, 0, 1),
+        colorHex: colorToHex(colorRaw),
+        blend: readInt32At(config, 8),
+        blendAverage: readInt32At(config, 12),
+        onlyFirst: readInt32At(config, 16),
+        ints: previewInts(config)
+    };
+}
+
+function decodeScatter(config) {
+    return {
+        enabled: readInt32At(config, 0, 1),
+        ints: previewInts(config)
+    };
+}
+
 function decodeEelBlockConfig(config) {
     const summary = {
         marker: config.length > 0 ? config[0] : 0,
@@ -337,6 +383,9 @@ function decodeEelBlockConfig(config) {
 }
 
 function decodeEffectConfig(effectId, config) {
+    if (effectId === 1) {
+        return decodeSimple(config);
+    }
     if (effectId === 3) {
         return decodeIntegerConfig(config, ["mode", "flags"]);
     }
@@ -351,6 +400,15 @@ function decodeEffectConfig(effectId, config) {
     }
     if (effectId === 20) {
         return decodeIntegerConfig(config, ["enabled", "onBeat", "durationFrames", "depth", "beatDepth", "blend", "blendAverage"]);
+    }
+    if (effectId === 12) {
+        return decodeScatter(config);
+    }
+    if (effectId === 25) {
+        return decodeClearScreen(config);
+    }
+    if (effectId === 33) {
+        return decodeIntegerConfig(config, ["enabled", "useBeats", "delay"]);
     }
     if (effectId === 37 || effectId === 38) {
         return decodeIntegerConfig(config, ["resourceId"]);
@@ -664,8 +722,9 @@ function main() {
         }
         const summarized = result.effects
                 .filter((effect) => effect.configSummary
-                        && (effect.id === 3 || effect.id === 6 || effect.id === 15 || effect.id === 18 || effect.id === 20
-                                || effect.id === 37 || effect.id === 38 || effect.id === 40
+                        && (effect.id === 1 || effect.id === 3 || effect.id === 6 || effect.id === 12
+                                || effect.id === 15 || effect.id === 18 || effect.id === 20
+                                || effect.id === 25 || effect.id === 33 || effect.id === 37 || effect.id === 38 || effect.id === 40
                                 || effect.id === 43 || effect.id === 44))
                 .slice(0, 10);
         for (const effect of summarized) {

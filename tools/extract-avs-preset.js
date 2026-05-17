@@ -33,7 +33,7 @@ const EFFECT_NAMES = new Map([
     [22, "Blitter Feedback"],
     [23, "Noise"],
     [24, "Color Reduction"],
-    [25, "Multiplexer"],
+    [25, "Clear Screen"],
     [26, "Color Clip"],
     [27, "Mirror"],
     [28, "Starfield"],
@@ -61,13 +61,17 @@ const EFFECT_NAMES = new Map([
 const EFFECT_TYPES = new Map([
     [-2, "effectList"],
     [0, "effectList"],
+    [1, "simple"],
     [3, "oscilloscope"],
     [6, "colorFade"],
+    [12, "scatter"],
     [15, "dotFountain"],
     [18, "bufferBlit"],
     [20, "bump"],
     [21, "comment"],
+    [25, "clearScreen"],
     [36, "superScope"],
+    [33, "videoDelay"],
     [37, "texer"],
     [38, "texer2"],
     [40, "lineMode"],
@@ -271,6 +275,57 @@ function decodeDotFountain(config) {
     return settings;
 }
 
+function decodeSimple(config) {
+    const effect = readInt32At(config, 0, 40);
+    const configuredColorCount = config.length >= 8 ? readInt32At(config, 4) : 1;
+    const colorCount = configuredColorCount > 0 && configuredColorCount <= 16 ? configuredColorCount : 0;
+    const colors = [];
+    for (let index = 0; index < colorCount && 8 + index * 4 + 4 <= config.length; index++) {
+        const color = readUInt32At(config, 8 + index * 4);
+        colors.push({ raw: color, hex: colorToHex(color) });
+    }
+    if (config.length === 0) {
+        colors.push({ raw: 0xffffff, hex: "#ffffff" });
+    }
+
+    const renderModeId = effect & 3;
+    const renderModes = ["solidAnalyzer", "lineAnalyzer", "lineScope", "solidScope"];
+    const channelId = (effect >>> 2) & 3;
+    const yPositionId = (effect >>> 4) & 3;
+    return {
+        effect,
+        renderModeId,
+        renderMode: renderModes[renderModeId] || "unknown",
+        source: renderModeId > 1 ? "waveform" : "spectrum",
+        channel: channelId === 0 ? "left" : channelId === 1 ? "right" : "center",
+        yPosition: yPositionId,
+        dots: (effect & (1 << 6)) !== 0,
+        colorCount: colors.length,
+        colors,
+        ints: previewInts(config)
+    };
+}
+
+function decodeClearScreen(config) {
+    const colorRaw = readUInt32At(config, 4);
+    return {
+        enabled: readInt32At(config, 0, 1),
+        colorRaw,
+        colorHex: colorToHex(colorRaw),
+        blend: readInt32At(config, 8),
+        blendAverage: readInt32At(config, 12),
+        onlyFirst: readInt32At(config, 16),
+        ints: previewInts(config)
+    };
+}
+
+function decodeScatter(config) {
+    return {
+        enabled: readInt32At(config, 0, 1),
+        ints: previewInts(config)
+    };
+}
+
 function decodeEelBlockConfig(config) {
     const settings = {
         marker: config.length > 0 ? config[0] : 0,
@@ -349,6 +404,9 @@ function decodeSuperScope(config) {
 }
 
 function decodeEffectSettings(effectId, config) {
+    if (effectId === 1) {
+        return decodeSimple(config);
+    }
     if (effectId === 3) {
         return decodeIntegerConfig(config, ["mode", "flags"]);
     }
@@ -363,6 +421,15 @@ function decodeEffectSettings(effectId, config) {
     }
     if (effectId === 20) {
         return decodeIntegerConfig(config, ["enabled", "onBeat", "durationFrames", "depth", "beatDepth", "blend", "blendAverage"]);
+    }
+    if (effectId === 12) {
+        return decodeScatter(config);
+    }
+    if (effectId === 25) {
+        return decodeClearScreen(config);
+    }
+    if (effectId === 33) {
+        return decodeIntegerConfig(config, ["enabled", "useBeats", "delay"]);
     }
     if (effectId === 36) {
         return decodeSuperScope(config);
@@ -504,7 +571,7 @@ function idFromFile(inputPath) {
 }
 
 function displayNameFromFile(inputPath) {
-    return path.basename(inputPath, ".avs").replace(/\s+-\s+/g, " ");
+    return path.basename(inputPath, ".avs").replace(/^([^-]+?)\s*-\s*/, "$1 ");
 }
 
 function parsePreset(inputPath, presetId) {
