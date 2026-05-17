@@ -7,6 +7,10 @@
     var presetName = document.getElementById("presetName");
     var avsPresetDefinitions = window.braviaAvsPresetDefinitions || {};
     var neonCoasterDefinition = avsPresetDefinitions.neonCoaster || null;
+    var avsEel = window.braviaAvsEel || null;
+    var avsNeonRuntime = null;
+    var avsNeonEelScope = null;
+    var avsNeonRuntimeFailed = false;
     var gl = null;
     var program = null;
     var quadBuffer = null;
@@ -54,6 +58,8 @@
     var avsNeonBlendMode = neonCoasterDefinition && neonCoasterDefinition.lineMode
             ? neonCoasterDefinition.lineMode.blendMode
             : "maximum";
+    // The BRAVIA WebView cannot interpret all 480 SuperScope points at 60 FPS yet.
+    var avsNeonInterpretedSampleCap = 360;
     var avsNeonVertices = new Float32Array(avsNeonSampleCount * 6 * 6);
     var avsFadeVertices = new Float32Array([
         -1, -1, 0, 0, 0, avsFastBrightnessFadeAlpha,
@@ -528,6 +534,137 @@
         return sample;
     }
 
+    function getAvsNeonRuntime() {
+        if (avsNeonRuntime || avsNeonRuntimeFailed) {
+            return avsNeonRuntime;
+        }
+        if (!avsEel || !neonCoasterDefinition || !neonCoasterDefinition.superScope
+                || !neonCoasterDefinition.superScope.eel) {
+            avsNeonRuntimeFailed = true;
+            return null;
+        }
+        try {
+            var eel = neonCoasterDefinition.superScope.eel;
+            if (typeof avsEel.compileSuite === "function") {
+                avsNeonRuntime = avsEel.compileSuite(eel);
+            } else {
+                avsNeonRuntime = {
+                    init: avsEel.compile(eel.init),
+                    frame: avsEel.compile(eel.frame),
+                    beat: avsEel.compile(eel.beat),
+                    point: avsEel.compile(eel.point)
+                };
+            }
+        } catch (exception) {
+            avsNeonRuntimeFailed = true;
+            if (window.console && typeof window.console.error === "function") {
+                window.console.error("AVS EEL compile failed", exception);
+            }
+            return null;
+        }
+        return avsNeonRuntime;
+    }
+
+    function avsEelHost() {
+        return {
+            getosc: function (position) {
+                return getOsc(position);
+            }
+        };
+    }
+
+    function runAvsEelProgram(program, scope) {
+        if (!program || avsNeonRuntimeFailed) {
+            return false;
+        }
+        try {
+            program.run(scope, avsEelHost());
+            return true;
+        } catch (exception) {
+            avsNeonRuntimeFailed = true;
+            avsNeonRuntime = null;
+            if (window.console && typeof window.console.error === "function") {
+                window.console.error("AVS EEL runtime failed", exception);
+            }
+            return false;
+        }
+    }
+
+    function runAvsNeonInitProgram() {
+        var runtime = getAvsNeonRuntime();
+        if (!runtime) {
+            return false;
+        }
+        if (typeof runtime.createScope === "function") {
+            avsNeonEelScope = runtime.createScope(avsNeonState);
+            if (!runAvsEelProgram(runtime.init, avsNeonEelScope)) {
+                avsNeonEelScope = null;
+                return false;
+            }
+            avsNeonState.n = runtime.get(avsNeonEelScope, "n") || avsNeonState.n;
+            return true;
+        }
+        return runAvsEelProgram(runtime.init, avsNeonState);
+    }
+
+    function runAvsNeonFrameProgram(isBeat, width, height) {
+        var runtime = getAvsNeonRuntime();
+        if (!runtime) {
+            return false;
+        }
+        var scope = avsNeonEelScope || avsNeonState;
+        if (typeof runtime.set === "function") {
+            runtime.set(scope, "w", width);
+            runtime.set(scope, "h", Math.max(1, height));
+        } else {
+            avsNeonState.w = width;
+            avsNeonState.h = Math.max(1, height);
+        }
+        if (!runAvsEelProgram(runtime.frame, scope)) {
+            return false;
+        }
+        if (isBeat) {
+            runAvsEelProgram(runtime.beat, scope);
+        }
+        if (typeof runtime.get === "function") {
+            avsNeonState.n = runtime.get(scope, "n") || avsNeonState.n;
+        }
+        return true;
+    }
+
+    function runAvsNeonPointProgram(pointIndex, renderedSampleCount) {
+        var runtime = getAvsNeonRuntime();
+        if (!runtime) {
+            return null;
+        }
+        var scope = avsNeonEelScope || avsNeonState;
+        var sampleCount = renderedSampleCount || avsNeonState.n;
+        if (typeof runtime.set === "function") {
+            runtime.set(scope, "i", pointIndex / Math.max(1, sampleCount - 1));
+        } else {
+            avsNeonState.i = pointIndex / Math.max(1, sampleCount - 1);
+        }
+        if (!runAvsEelProgram(runtime.point, scope)) {
+            return null;
+        }
+        if (typeof runtime.get === "function") {
+            return {
+                x: runtime.get(scope, "x") || 0,
+                y: runtime.get(scope, "y") || 0,
+                r: clamp(runtime.get(scope, "red") || 0, 0, 1),
+                g: clamp(runtime.get(scope, "green") || 0, 0, 1),
+                b: clamp(runtime.get(scope, "blue") || 0, 0, 1)
+            };
+        }
+        return {
+            x: avsNeonState.x || 0,
+            y: avsNeonState.y || 0,
+            r: clamp(avsNeonState.red || 0, 0, 1),
+            g: clamp(avsNeonState.green || 0, 0, 1),
+            b: clamp(avsNeonState.blue || 0, 0, 1)
+        };
+    }
+
     function resetAvsNeonState() {
         avsNeonState = {
             n: avsNeonSampleCount,
@@ -576,6 +713,8 @@
             beatAverage: 0.18,
             lastBeatAt: 0
         };
+        avsNeonEelScope = null;
+        runAvsNeonInitProgram();
         avsNeonFrameStarted = false;
     }
 
@@ -600,6 +739,9 @@
         }
         var s = avsNeonState;
         var isBeat = detectAvsBeat(now);
+        if (runAvsNeonFrameProgram(isBeat, width, height)) {
+            return;
+        }
         var red = eelBor(eelBelow(s.u, 5.02), eelAbove(s.u, 9.86));
         s.rx = Math.atan2(safeSqrt(sqr(s.ooz - s.oz) + sqr(s.oox - s.ox)), s.ooy - s.oy) - 1.57;
         s.ry = eelIf(red, Math.atan2(s.ooz - s.oz, s.oox - s.ox) - 1.57, -1.57 * sign(s.oox - s.ox));
@@ -632,7 +774,11 @@
         }
     }
 
-    function avsNeonPoint(pointIndex) {
+    function avsNeonPoint(pointIndex, renderedSampleCount) {
+        var runtimePoint = runAvsNeonPointProgram(pointIndex, renderedSampleCount);
+        if (runtimePoint) {
+            return runtimePoint;
+        }
         var s = avsNeonState;
         s.jx = s.kx;
         s.jz = s.kz;
@@ -641,7 +787,7 @@
         s.hi = -s.hi;
         s.hp = (s.hp + 1) % 3;
 
-        var i = (pointIndex / Math.max(1, s.n - 1)) * 31.82;
+        var i = (pointIndex / Math.max(1, (renderedSampleCount || s.n) - 1)) * 31.82;
         var u1 = i;
         var u2 = 0;
         var pc = 0;
@@ -1024,11 +1170,13 @@
             return;
         }
         updateAvsNeonFrame(now, canvas.width, canvas.height);
-        var count = avsNeonState.n;
+        var count = avsNeonEelScope
+                ? Math.min(avsNeonState.n, avsNeonInterpretedSampleCap)
+                : avsNeonState.n;
         var vertexCount = 0;
         var previous = null;
         for (var i = 0; i < count; i++) {
-            var vertex = avsNeonPoint(i);
+            var vertex = avsNeonPoint(i, count);
             var alpha = Math.max(vertex.r, vertex.g, vertex.b) > 0 ? 0.96 : 0;
             if (previous && previous.a > 0 && alpha > 0) {
                 var distance = Math.abs(previous.x - vertex.x) + Math.abs(previous.y - vertex.y);
