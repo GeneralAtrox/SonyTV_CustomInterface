@@ -20,6 +20,11 @@
     var lineProgram = null;
     var lineBuffer = null;
     var lineLocations = {};
+    var avsCopyProgram = null;
+    var avsCopyLocations = {};
+    var avsFeedbackProgram = null;
+    var avsFeedbackLocations = {};
+    var avsFramebufferState = null;
     var running = false;
     var paused = false;
     var lastFrameAt = 0;
@@ -421,6 +426,51 @@
         + "    outColor = v_color;\n"
         + "}\n";
 
+    var avsCopyFragmentSource = "#version 300 es\n"
+        + "precision mediump float;\n"
+        + "in vec2 v_uv;\n"
+        + "uniform sampler2D u_texture;\n"
+        + "uniform float u_opacity;\n"
+        + "out vec4 outColor;\n"
+        + "void main() {\n"
+        + "    outColor = texture(u_texture, v_uv) * vec4(1.0, 1.0, 1.0, u_opacity);\n"
+        + "}\n";
+
+    var avsFeedbackFragmentSource = "#version 300 es\n"
+        + "precision highp float;\n"
+        + "in vec2 v_uv;\n"
+        + "uniform sampler2D u_texture;\n"
+        + "uniform vec2 u_resolution;\n"
+        + "uniform float u_mode;\n"
+        + "uniform float u_amount;\n"
+        + "uniform float u_time;\n"
+        + "uniform vec4 u_audio;\n"
+        + "out vec4 outColor;\n"
+        + "float hash(vec2 value) {\n"
+        + "    return fract(sin(dot(value, vec2(127.1, 311.7))) * 43758.5453123);\n"
+        + "}\n"
+        + "void main() {\n"
+        + "    vec2 uv = v_uv;\n"
+        + "    vec2 aspect = vec2(u_resolution.x / max(1.0, u_resolution.y), 1.0);\n"
+        + "    vec2 centered = (uv - 0.5) * aspect;\n"
+        + "    if (u_mode < 1.5) {\n"
+        + "        float radius = length(centered) + 0.0001;\n"
+        + "        float wave = sin(radius * 58.0 - u_time * 4.2) * 0.5 + 0.5;\n"
+        + "        vec2 direction = centered / radius / aspect;\n"
+        + "        uv += direction * wave * u_amount * (0.012 + u_audio.y * 0.006);\n"
+        + "    } else if (u_mode < 2.5) {\n"
+        + "        vec2 cell = floor(uv * u_resolution / 6.0);\n"
+        + "        vec2 jitter = vec2(hash(cell + u_time), hash(cell + 17.0 + u_time)) - 0.5;\n"
+        + "        uv += jitter * u_amount * 7.5 / max(u_resolution, vec2(1.0));\n"
+        + "    } else {\n"
+        + "        float pulse = 1.0 + u_amount * (0.012 + u_audio.x * 0.008);\n"
+        + "        float turn = u_amount * 0.006 * sin(u_time * 0.7);\n"
+        + "        mat2 rotation = mat2(cos(turn), -sin(turn), sin(turn), cos(turn));\n"
+        + "        uv = ((rotation * ((uv - 0.5) / pulse)) + 0.5);\n"
+        + "    }\n"
+        + "    outColor = texture(u_texture, clamp(uv, vec2(0.0), vec2(1.0)));\n"
+        + "}\n";
+
     var locations = {};
 
     function safeBridge(method) {
@@ -652,6 +702,216 @@
         }
     }
 
+    function createAvsRenderTarget(width, height) {
+        var texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+        var framebuffer = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+        if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+            gl.deleteFramebuffer(framebuffer);
+            gl.deleteTexture(texture);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            return null;
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        return {
+            texture: texture,
+            framebuffer: framebuffer,
+            width: width,
+            height: height
+        };
+    }
+
+    function destroyAvsRenderTarget(target) {
+        if (!gl || !target) {
+            return;
+        }
+        if (target.framebuffer) {
+            gl.deleteFramebuffer(target.framebuffer);
+        }
+        if (target.texture) {
+            gl.deleteTexture(target.texture);
+        }
+    }
+
+    function resetAvsFramebuffers() {
+        if (!avsFramebufferState) {
+            return;
+        }
+        destroyAvsRenderTarget(avsFramebufferState.front);
+        destroyAvsRenderTarget(avsFramebufferState.scratch);
+        avsFramebufferState = null;
+    }
+
+    function ensureAvsFramebuffers() {
+        if (!gl || !avsCopyProgram || !avsFeedbackProgram || !quadBuffer || canvas.width <= 0 || canvas.height <= 0) {
+            return null;
+        }
+        if (avsFramebufferState && avsFramebufferState.width === canvas.width
+                && avsFramebufferState.height === canvas.height) {
+            return avsFramebufferState;
+        }
+        resetAvsFramebuffers();
+        var front = createAvsRenderTarget(canvas.width, canvas.height);
+        var scratch = createAvsRenderTarget(canvas.width, canvas.height);
+        if (!front || !scratch) {
+            destroyAvsRenderTarget(front);
+            destroyAvsRenderTarget(scratch);
+            return null;
+        }
+        avsFramebufferState = {
+            width: canvas.width,
+            height: canvas.height,
+            front: front,
+            scratch: scratch
+        };
+        safeBridge("reportEvent", "avs_framebuffer_" + canvas.width + "x" + canvas.height);
+        return avsFramebufferState;
+    }
+
+    function bindAvsQuad(positionLocation) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+        gl.enableVertexAttribArray(positionLocation);
+        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+    }
+
+    function bindAvsLineTarget(target) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.framebuffer : null);
+        gl.viewport(0, 0, target ? target.width : canvas.width, target ? target.height : canvas.height);
+        gl.useProgram(lineProgram);
+        gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+        gl.enableVertexAttribArray(lineLocations.position);
+        gl.vertexAttribPointer(lineLocations.position, 2, gl.FLOAT, false, 24, 0);
+        gl.enableVertexAttribArray(lineLocations.color);
+        gl.vertexAttribPointer(lineLocations.color, 4, gl.FLOAT, false, 24, 8);
+    }
+
+    function copyAvsTexture(texture, target, opacity) {
+        if (!texture || !avsCopyProgram) {
+            return;
+        }
+        var targetWidth = target ? target.width : canvas.width;
+        var targetHeight = target ? target.height : canvas.height;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.framebuffer : null);
+        gl.viewport(0, 0, targetWidth, targetHeight);
+        gl.useProgram(avsCopyProgram);
+        bindAvsQuad(avsCopyLocations.position);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.uniform1i(avsCopyLocations.texture, 0);
+        gl.uniform1f(avsCopyLocations.opacity, opacity == null ? 1 : opacity);
+        gl.disable(gl.BLEND);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
+    function copyAvsTextureToScreen(texture) {
+        copyAvsTexture(texture, null, 1);
+    }
+
+    function swapAvsFramebuffers() {
+        var state = avsFramebufferState;
+        var previous = state.front;
+        state.front = state.scratch;
+        state.scratch = previous;
+    }
+
+    function replaceAvsFrameWithTexture(texture) {
+        var state = ensureAvsFramebuffers();
+        if (!state || !texture) {
+            return false;
+        }
+        copyAvsTexture(texture, state.scratch, 1);
+        swapAvsFramebuffers();
+        bindAvsLineTarget(avsFramebufferState.front);
+        return true;
+    }
+
+    function applyAvsFeedbackPass(mode, amount, seed) {
+        var state = ensureAvsFramebuffers();
+        if (!state || !avsFeedbackProgram) {
+            return false;
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, state.scratch.framebuffer);
+        gl.viewport(0, 0, state.scratch.width, state.scratch.height);
+        gl.useProgram(avsFeedbackProgram);
+        bindAvsQuad(avsFeedbackLocations.position);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, state.front.texture);
+        gl.uniform1i(avsFeedbackLocations.texture, 0);
+        gl.uniform2f(avsFeedbackLocations.resolution, state.width, state.height);
+        gl.uniform1f(avsFeedbackLocations.mode, mode);
+        gl.uniform1f(avsFeedbackLocations.amount, Math.max(0, amount || 0));
+        gl.uniform1f(avsFeedbackLocations.time, seed == null ? visualTimeSeconds : seed);
+        gl.uniform4f(avsFeedbackLocations.audio, audio.rms, audio.bass, audio.mid, audio.treb);
+        gl.disable(gl.BLEND);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        swapAvsFramebuffers();
+        bindAvsLineTarget(avsFramebufferState.front);
+        return true;
+    }
+
+    function destroyAvsDelayHistory(renderer) {
+        if (!renderer || !renderer.delayHistory) {
+            return;
+        }
+        var targets = renderer.delayHistory.targets || [];
+        for (var index = 0; index < targets.length; index++) {
+            destroyAvsRenderTarget(targets[index]);
+        }
+        renderer.delayHistory = null;
+        renderer.historyIndex = 0;
+        renderer.historyReady = 0;
+    }
+
+    function ensureAvsDelayHistory(renderer, frameCount) {
+        var state = ensureAvsFramebuffers();
+        if (!state) {
+            return null;
+        }
+        var count = Math.max(2, Math.min(8, Math.round(frameCount || 2)));
+        var history = renderer.delayHistory;
+        if (history && history.width === state.width && history.height === state.height && history.count === count) {
+            return history.targets;
+        }
+        destroyAvsDelayHistory(renderer);
+        var targets = [];
+        for (var index = 0; index < count; index++) {
+            var target = createAvsRenderTarget(state.width, state.height);
+            if (!target) {
+                for (var cleanup = 0; cleanup < targets.length; cleanup++) {
+                    destroyAvsRenderTarget(targets[cleanup]);
+                }
+                return null;
+            }
+            targets.push(target);
+        }
+        renderer.delayHistory = {
+            width: state.width,
+            height: state.height,
+            count: count,
+            targets: targets
+        };
+        renderer.historyIndex = 0;
+        renderer.historyReady = 0;
+        return targets;
+    }
+
+    function releaseAvsRuntimeFramebuffers(runtime) {
+        if (!runtime || !runtime.renderers) {
+            return;
+        }
+        for (var index = 0; index < runtime.renderers.length; index++) {
+            destroyAvsDelayHistory(runtime.renderers[index]);
+        }
+    }
+
     function flattenAvsRuntimeEffects(effects, output) {
         for (var index = 0; index < effects.length; index++) {
             var effect = effects[index];
@@ -720,6 +980,7 @@
     }
 
     function resetAvsStackRuntime() {
+        releaseAvsRuntimeFramebuffers(avsStackRuntime);
         avsStackPresetId = "";
         avsStackRuntime = null;
         avsStackRuntimeFailed = false;
@@ -834,6 +1095,7 @@
         var preset = presets[presetIndex];
         var presetId = preset && preset.avsPresetId ? preset.avsPresetId : "";
         if (presetId !== avsStackPresetId) {
+            releaseAvsRuntimeFramebuffers(avsStackRuntime);
             avsStackPresetId = presetId;
             avsStackRuntime = null;
             avsStackRuntimeFailed = false;
@@ -1059,8 +1321,16 @@
 
     function renderAvsBufferBlit(renderer) {
         var mode = renderer.settings ? renderer.settings.mode : 0;
-        var alpha = mode === 1 ? 0.16 : (mode === 2 ? 0.08 : (mode === 7 ? 0.04 : 0.035));
-        drawAvsBlackFade(alpha);
+        if (mode === 1 || mode === 2 || mode === 7) {
+            var amount = mode === 1 ? 0.60 : (mode === 2 ? 0.38 : 0.20);
+            if (applyAvsFeedbackPass(3, amount, visualTimeSeconds * 0.72 + mode)) {
+                drawAvsBlackFade(mode === 1 ? 0.035 : 0.020);
+                return;
+            }
+        }
+        if (mode !== 0) {
+            drawAvsBlackFade(0.035);
+        }
     }
 
     function renderAvsColorFade(renderer) {
@@ -1103,16 +1373,36 @@
         if (settings.enabled === 0) {
             return;
         }
-        renderer.phase = (renderer.phase || 0) + 1;
         var delay = Math.max(1, Math.min(200, Math.round(settings.delay || 1)));
-        var beatBoost = settings.useBeats && isBeat ? 0.08 : 0;
-        drawAvsBlackFade(Math.min(0.10, 0.015 + delay / 4000 + beatBoost));
+        var history = ensureAvsDelayHistory(renderer, Math.min(8, delay + 1));
+        var state = avsFramebufferState;
+        if (!history || !state) {
+            var beatBoost = settings.useBeats && isBeat ? 0.08 : 0;
+            drawAvsBlackFade(Math.min(0.10, 0.015 + delay / 4000 + beatBoost));
+            return;
+        }
+
+        var writeIndex = renderer.historyIndex % history.length;
+        copyAvsTexture(state.front.texture, history[writeIndex], 1);
+        renderer.historyReady = Math.min(history.length, (renderer.historyReady || 0) + 1);
+        if (renderer.historyReady >= history.length) {
+            var readIndex = (writeIndex + 1) % history.length;
+            replaceAvsFrameWithTexture(history[readIndex].texture);
+            if (settings.useBeats && isBeat) {
+                drawAvsBlackFade(0.025);
+            }
+        } else {
+            bindAvsLineTarget(state.front);
+            drawAvsBlackFade(0.012);
+        }
+        renderer.historyIndex = (writeIndex + 1) % history.length;
     }
 
     function renderAvsScatter(renderer) {
         if (renderer.settings && renderer.settings.enabled === 0) {
             return;
         }
+        applyAvsFeedbackPass(2, 0.40 + audio.treb * 0.35, visualTimeSeconds * 0.83 + (renderer.seed || 0));
         var count = 70;
         ensureAvsStackVertexCapacity(count, 6);
         var vertexCount = 0;
@@ -1150,6 +1440,7 @@
         renderer.phase = wrap01((renderer.phase || 0) + 0.010 + audio.bass * 0.014);
 
         var depth = Math.max(baseDepth, renderer.beatDepth || 0);
+        applyAvsFeedbackPass(1, depth * 0.78 + audio.bass * 0.16, visualTimeSeconds + (isBeat ? 0.37 : 0));
         var segments = 40;
         var rings = 3;
         ensureAvsStackVertexCapacity(segments * rings, 6);
@@ -1347,18 +1638,17 @@
             renderProceduralTunnel(now);
             return;
         }
+        var framebuffers = ensureAvsFramebuffers();
+        if (!framebuffers) {
+            renderProceduralTunnel(now);
+            return;
+        }
         if (paused && avsStackFrameStarted) {
+            copyAvsTextureToScreen(framebuffers.front.texture);
             return;
         }
 
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.useProgram(lineProgram);
-        gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
-        gl.enableVertexAttribArray(lineLocations.position);
-        gl.vertexAttribPointer(lineLocations.position, 2, gl.FLOAT, false, 24, 0);
-        gl.enableVertexAttribArray(lineLocations.color);
-        gl.vertexAttribPointer(lineLocations.color, 4, gl.FLOAT, false, 24, 8);
+        bindAvsLineTarget(framebuffers.front);
 
         if (!avsStackFrameStarted) {
             gl.clearColor(0, 0, 0, 1);
@@ -1379,6 +1669,7 @@
         }
         gl.blendEquation(gl.FUNC_ADD);
         gl.disable(gl.BLEND);
+        copyAvsTextureToScreen(avsFramebufferState.front.texture);
     }
 
     function getAvsNeonRuntime() {
@@ -2283,6 +2574,14 @@
         return createLinkedProgram(lineVertexSource, lineFragmentSource);
     }
 
+    function createAvsCopyProgram() {
+        return createLinkedProgram(vertexSource, avsCopyFragmentSource);
+    }
+
+    function createAvsFeedbackProgram() {
+        return createLinkedProgram(vertexSource, avsFeedbackFragmentSource);
+    }
+
     function resize() {
         var ratio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
         var width = Math.max(320, Math.floor(window.innerWidth * ratio));
@@ -2290,6 +2589,8 @@
         if (canvas.width !== width || canvas.height !== height) {
             canvas.width = width;
             canvas.height = height;
+            resetAvsFramebuffers();
+            releaseAvsRuntimeFramebuffers(avsStackRuntime);
             avsNeonFrameStarted = false;
             avsStackFrameStarted = false;
             if (gl) {
@@ -2660,6 +2961,19 @@
         lineLocations.color = gl.getAttribLocation(lineProgram, "a_color");
     }
 
+    function initAvsPassLocations() {
+        avsCopyLocations.position = gl.getAttribLocation(avsCopyProgram, "a_position");
+        avsCopyLocations.texture = gl.getUniformLocation(avsCopyProgram, "u_texture");
+        avsCopyLocations.opacity = gl.getUniformLocation(avsCopyProgram, "u_opacity");
+        avsFeedbackLocations.position = gl.getAttribLocation(avsFeedbackProgram, "a_position");
+        avsFeedbackLocations.texture = gl.getUniformLocation(avsFeedbackProgram, "u_texture");
+        avsFeedbackLocations.resolution = gl.getUniformLocation(avsFeedbackProgram, "u_resolution");
+        avsFeedbackLocations.mode = gl.getUniformLocation(avsFeedbackProgram, "u_mode");
+        avsFeedbackLocations.amount = gl.getUniformLocation(avsFeedbackProgram, "u_amount");
+        avsFeedbackLocations.time = gl.getUniformLocation(avsFeedbackProgram, "u_time");
+        avsFeedbackLocations.audio = gl.getUniformLocation(avsFeedbackProgram, "u_audio");
+    }
+
     function initLocations() {
         locations.resolution = gl.getUniformLocation(program, "u_resolution");
         locations.time = gl.getUniformLocation(program, "u_time");
@@ -2691,9 +3005,12 @@
             resize();
             program = createProgram();
             lineProgram = createLineProgram();
+            avsCopyProgram = createAvsCopyProgram();
+            avsFeedbackProgram = createAvsFeedbackProgram();
             gl.useProgram(program);
             initGeometry();
             initLineGeometry();
+            initAvsPassLocations();
             initLocations();
             gl.disable(gl.DEPTH_TEST);
             gl.disable(gl.CULL_FACE);
