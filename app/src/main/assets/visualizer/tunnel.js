@@ -73,6 +73,15 @@
         1, 1, 0, 0, 0, avsFastBrightnessFadeAlpha
     ]);
     var avsNeonFrameStarted = false;
+    var avsStackPresetId = "";
+    var avsStackRuntime = null;
+    var avsStackRuntimeFailed = false;
+    var avsStackFrameStarted = false;
+    var avsStackBeatAverage = 0.18;
+    var avsStackLastBeatAt = 0;
+    var avsStackVertices = new Float32Array(480 * 6 * 6);
+    var avsStackPointScratch = new Float32Array(6);
+    var avsStackPreviousScratch = new Float32Array(6);
 
     var presets = [
         {
@@ -90,7 +99,9 @@
             colorC: [0.78, 0.42, 0.12]
         },
         {
-            name: "UnConeD Containment",
+            name: avsPresetDefinitions.containment ? avsPresetDefinitions.containment.displayName : "UnConeD Containment",
+            mode: "avs",
+            avsPresetId: "containment",
             shape: 0,
             turn: 0.10,
             twist: 0.24,
@@ -120,7 +131,9 @@
             colorC: [0.72, 0.82, 0.16]
         },
         {
-            name: "UnConeD Speeder 3K",
+            name: avsPresetDefinitions.speeder3K ? avsPresetDefinitions.speeder3K.displayName : "UnConeD Speeder 3K",
+            mode: "avs",
+            avsPresetId: "speeder3K",
             shape: 0.10,
             turn: 0.22,
             twist: 0.14,
@@ -148,7 +161,9 @@
             colorC: [0.88, 0.62, 0.16]
         },
         {
-            name: "UnConeD Zero-G Maze II",
+            name: avsPresetDefinitions.zeroGMazeII ? avsPresetDefinitions.zeroGMazeII.displayName : "UnConeD Zero-G Maze II",
+            mode: "avs",
+            avsPresetId: "zeroGMazeII",
             shape: 1,
             turn: 0.28,
             twist: 0.18,
@@ -432,6 +447,10 @@
         return presets[presetIndex].mode === "coaster";
     }
 
+    function isAvsPreset() {
+        return presets[presetIndex].mode === "avs";
+    }
+
     function setCoasterVisible(visible) {
         if (!coasterCanvas || coasterVisible === visible) {
             return;
@@ -535,6 +554,302 @@
             return Math.sin(visualTimeSeconds * 2.4 + samplePosition * Math.PI * 2) * audio.rms;
         }
         return sample;
+    }
+
+    function defaultAvsLineMode() {
+        return {
+            blendMode: "maximum",
+            lineWidth: 2
+        };
+    }
+
+    function cloneAvsLineMode(mode) {
+        var source = mode || defaultAvsLineMode();
+        return {
+            blendMode: source.blendMode || "maximum",
+            lineWidth: Math.max(1, Math.min(64, Math.round(source.lineWidth || 2)))
+        };
+    }
+
+    function normalizeAvsSampleCount(value, fallback) {
+        var count = Math.round(Number(value) || 0);
+        if (count <= 0) {
+            count = fallback || 64;
+        }
+        return Math.max(1, Math.min(1024, count));
+    }
+
+    function setAvsFadeAlpha(alpha) {
+        for (var index = 5; index < avsFadeVertices.length; index += 6) {
+            avsFadeVertices[index] = alpha;
+        }
+    }
+
+    function flattenAvsRuntimeEffects(effects, output) {
+        for (var index = 0; index < effects.length; index++) {
+            var effect = effects[index];
+            output.push(effect);
+            if (effect.effects && effect.effects.length > 0) {
+                flattenAvsRuntimeEffects(effect.effects, output);
+            }
+        }
+        return output;
+    }
+
+    function createAvsInitialState(sampleCount) {
+        return {
+            n: normalizeAvsSampleCount(sampleCount, 64),
+            tpi: Math.acos(-1),
+            pi: Math.acos(-1),
+            w: Math.max(1, canvas.width),
+            h: Math.max(1, canvas.height),
+            x: 0,
+            y: 0,
+            red: 0,
+            green: 0,
+            blue: 0,
+            beatAverage: 0.18,
+            lastBeatAt: 0
+        };
+    }
+
+    function resetAvsStackRuntime() {
+        avsStackPresetId = "";
+        avsStackRuntime = null;
+        avsStackRuntimeFailed = false;
+        avsStackFrameStarted = false;
+        avsStackBeatAverage = 0.18;
+        avsStackLastBeatAt = 0;
+    }
+
+    function getActiveAvsPresetDefinition() {
+        var preset = presets[presetIndex];
+        if (!preset || preset.mode !== "avs" || !preset.avsPresetId) {
+            return null;
+        }
+        return avsPresetDefinitions[preset.avsPresetId] || null;
+    }
+
+    function compileAvsStackRuntime(definition) {
+        if (!definition || !definition.effects || !avsEel || typeof avsEel.compileSuite !== "function") {
+            return null;
+        }
+
+        var flattened = flattenAvsRuntimeEffects(definition.effects, []);
+        var lineMode = cloneAvsLineMode(definition.lineMode);
+        var runtime = {
+            id: definition.id,
+            displayName: definition.displayName,
+            fadeAlpha: definition.fastBrightness && definition.fastBrightness.operation === "halve" ? 0.5 : 0.10,
+            renderers: []
+        };
+
+        for (var index = 0; index < flattened.length; index++) {
+            var effect = flattened[index];
+            if (effect.type === "lineMode") {
+                lineMode = cloneAvsLineMode(effect.settings);
+            } else if (effect.type === "fastBrightness") {
+                runtime.fadeAlpha = effect.settings && effect.settings.operation === "halve" ? 0.5 : runtime.fadeAlpha;
+            } else if (effect.type === "superScope" && effect.settings && effect.settings.eel) {
+                var settings = effect.settings;
+                var suite = avsEel.compileSuite(settings.eel);
+                var sampleCount = normalizeAvsSampleCount(settings.sampleCount, 64);
+                var scope = suite.createScope(createAvsInitialState(sampleCount));
+                var slots = suite.slots(["n", "w", "h", "i", "x", "y", "red", "green", "blue"]);
+                suite.init.run(scope, avsEelHost());
+                sampleCount = normalizeAvsSampleCount(suite.getSlot(scope, slots.n), sampleCount);
+                runtime.renderers.push({
+                    suite: suite,
+                    scope: scope,
+                    slots: slots,
+                    sampleCount: sampleCount,
+                    drawMode: settings.drawMode || "lines",
+                    lineMode: cloneAvsLineMode(lineMode),
+                    colors: settings.colors || [],
+                    hasColorSlots: slots.red >= 0 || slots.green >= 0 || slots.blue >= 0
+                });
+            }
+        }
+
+        return runtime.renderers.length > 0 ? runtime : null;
+    }
+
+    function getAvsStackRuntime() {
+        var preset = presets[presetIndex];
+        var presetId = preset && preset.avsPresetId ? preset.avsPresetId : "";
+        if (presetId !== avsStackPresetId) {
+            avsStackPresetId = presetId;
+            avsStackRuntime = null;
+            avsStackRuntimeFailed = false;
+            avsStackFrameStarted = false;
+            avsStackBeatAverage = 0.18;
+            avsStackLastBeatAt = 0;
+        }
+        if (avsStackRuntime || avsStackRuntimeFailed) {
+            return avsStackRuntime;
+        }
+        try {
+            avsStackRuntime = compileAvsStackRuntime(getActiveAvsPresetDefinition());
+            if (!avsStackRuntime) {
+                avsStackRuntimeFailed = true;
+            }
+        } catch (exception) {
+            avsStackRuntimeFailed = true;
+            avsStackRuntime = null;
+            if (window.console && typeof window.console.error === "function") {
+                window.console.error("AVS stack compile failed", exception);
+            }
+        }
+        return avsStackRuntime;
+    }
+
+    function detectAvsStackBeat(now) {
+        var energy = Math.max(audio.rms, audio.bass * 0.72 + audio.mid * 0.28);
+        avsStackBeatAverage += (energy - avsStackBeatAverage) * 0.028;
+        if (now - avsStackLastBeatAt < 170) {
+            return false;
+        }
+        if (energy > Math.max(0.13, avsStackBeatAverage * 1.34)) {
+            avsStackLastBeatAt = now;
+            avsStackBeatAverage = avsStackBeatAverage * 0.86 + energy * 0.14;
+            return true;
+        }
+        return false;
+    }
+
+    function runAvsStackProgram(runtime, program, scope) {
+        if (!program || avsStackRuntimeFailed) {
+            return false;
+        }
+        try {
+            program.run(scope, avsEelHost());
+            return true;
+        } catch (exception) {
+            avsStackRuntimeFailed = true;
+            avsStackRuntime = null;
+            if (window.console && typeof window.console.error === "function") {
+                window.console.error("AVS stack runtime failed", exception);
+            }
+            return false;
+        }
+    }
+
+    function ensureAvsStackVertexCapacity(sampleCount) {
+        var required = Math.max(6, sampleCount * 6) * 6;
+        if (avsStackVertices.length < required) {
+            avsStackVertices = new Float32Array(required);
+        }
+    }
+
+    function avsColorComponent(color, shift) {
+        return ((color >>> shift) & 0xff) / 255;
+    }
+
+    function readAvsStackPoint(renderer, out) {
+        var suite = renderer.suite;
+        var scope = renderer.scope;
+        var slots = renderer.slots;
+        out[0] = suite.getSlot(scope, slots.x) || 0;
+        out[1] = suite.getSlot(scope, slots.y) || 0;
+        if (renderer.hasColorSlots) {
+            out[2] = clamp(suite.getSlot(scope, slots.red) || 0, 0, 1);
+            out[3] = clamp(suite.getSlot(scope, slots.green) || 0, 0, 1);
+            out[4] = clamp(suite.getSlot(scope, slots.blue) || 0, 0, 1);
+        } else if (renderer.colors.length > 0) {
+            var color = renderer.colors[0].raw || 0xffffff;
+            out[2] = avsColorComponent(color, 16);
+            out[3] = avsColorComponent(color, 8);
+            out[4] = avsColorComponent(color, 0);
+        } else {
+            out[2] = 1;
+            out[3] = 1;
+            out[4] = 1;
+        }
+        out[5] = Math.max(out[2], out[3], out[4]) > 0 ? 0.92 : 0;
+        return out;
+    }
+
+    function renderAvsStackRenderer(renderer, isBeat) {
+        var suite = renderer.suite;
+        var scope = renderer.scope;
+        var slots = renderer.slots;
+        suite.setSlot(scope, slots.w, canvas.width);
+        suite.setSlot(scope, slots.h, Math.max(1, canvas.height));
+        if (!runAvsStackProgram(suite, suite.frame, scope)) {
+            return;
+        }
+        if (isBeat) {
+            runAvsStackProgram(suite, suite.beat, scope);
+        }
+
+        var sampleCount = normalizeAvsSampleCount(suite.getSlot(scope, slots.n), renderer.sampleCount);
+        renderer.sampleCount = sampleCount;
+        ensureAvsStackVertexCapacity(sampleCount);
+
+        var vertexCount = 0;
+        var hasPrevious = false;
+        var step = 1 / Math.max(1, sampleCount - 1);
+        for (var index = 0; index < sampleCount; index++) {
+            suite.setSlot(scope, slots.i, index * step);
+            if (!runAvsStackProgram(suite, suite.point, scope)) {
+                return;
+            }
+            readAvsStackPoint(renderer, avsStackPointScratch);
+            if (renderer.drawMode === "points") {
+                vertexCount = addAvsPointQuadTo(avsStackVertices, vertexCount, avsStackPointScratch,
+                        renderer.lineMode.lineWidth);
+            } else if (hasPrevious && avsStackPreviousScratch[5] > 0 && avsStackPointScratch[5] > 0) {
+                var distance = Math.abs(avsStackPreviousScratch[0] - avsStackPointScratch[0])
+                        + Math.abs(avsStackPreviousScratch[1] - avsStackPointScratch[1]);
+                if (distance < 2.6) {
+                    vertexCount = addAvsSegmentTo(avsStackVertices, vertexCount, avsStackPreviousScratch,
+                            avsStackPointScratch, renderer.lineMode.lineWidth);
+                }
+            }
+            copyAvsPoint(avsStackPointScratch, avsStackPreviousScratch);
+            hasPrevious = true;
+        }
+        drawAvsVertices(avsStackVertices, vertexCount, renderer.lineMode.blendMode);
+    }
+
+    function renderAvsPreset(now) {
+        var runtime = getAvsStackRuntime();
+        if (!runtime || !lineProgram || !lineBuffer) {
+            renderProceduralTunnel(now);
+            return;
+        }
+        if (paused && avsStackFrameStarted) {
+            return;
+        }
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.useProgram(lineProgram);
+        gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+        gl.enableVertexAttribArray(lineLocations.position);
+        gl.vertexAttribPointer(lineLocations.position, 2, gl.FLOAT, false, 24, 0);
+        gl.enableVertexAttribArray(lineLocations.color);
+        gl.vertexAttribPointer(lineLocations.color, 4, gl.FLOAT, false, 24, 8);
+
+        if (!avsStackFrameStarted) {
+            gl.clearColor(0, 0, 0, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            avsStackFrameStarted = true;
+        } else {
+            setAvsFadeAlpha(runtime.fadeAlpha);
+            gl.bufferData(gl.ARRAY_BUFFER, avsFadeVertices, gl.STATIC_DRAW);
+            gl.enable(gl.BLEND);
+            gl.blendEquation(gl.FUNC_ADD);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+        }
+
+        var isBeat = detectAvsStackBeat(now);
+        for (var index = 0; index < runtime.renderers.length && !avsStackRuntimeFailed; index++) {
+            renderAvsStackRenderer(runtime.renderers[index], isBeat);
+        }
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.disable(gl.BLEND);
     }
 
     function getAvsNeonRuntime() {
@@ -1173,13 +1488,17 @@
         ctx.globalAlpha = 1;
     }
 
+    function writeAvsVertex(vertices, offset, x, y, r, g, b, a) {
+        vertices[offset] = x;
+        vertices[offset + 1] = y;
+        vertices[offset + 2] = r;
+        vertices[offset + 3] = g;
+        vertices[offset + 4] = b;
+        vertices[offset + 5] = a;
+    }
+
     function writeAvsNeonVertex(offset, x, y, r, g, b, a) {
-        avsNeonVertices[offset] = x;
-        avsNeonVertices[offset + 1] = y;
-        avsNeonVertices[offset + 2] = r;
-        avsNeonVertices[offset + 3] = g;
-        avsNeonVertices[offset + 4] = b;
-        avsNeonVertices[offset + 5] = a;
+        writeAvsVertex(avsNeonVertices, offset, x, y, r, g, b, a);
     }
 
     function avsPixelToClipX(x) {
@@ -1191,17 +1510,28 @@
     }
 
     function addAvsLineQuad(vertexCount, x1, y1, x2, y2, x3, y3, x4, y4, r, g, b, a) {
+        return addAvsLineQuadTo(avsNeonVertices, vertexCount, x1, y1, x2, y2, x3, y3, x4, y4, r, g, b, a);
+    }
+
+    function addAvsLineQuadTo(vertices, vertexCount, x1, y1, x2, y2, x3, y3, x4, y4, r, g, b, a) {
         var offset = vertexCount * 6;
-        writeAvsNeonVertex(offset, avsPixelToClipX(x1), avsPixelToClipY(y1), r, g, b, a);
-        writeAvsNeonVertex(offset + 6, avsPixelToClipX(x2), avsPixelToClipY(y2), r, g, b, a);
-        writeAvsNeonVertex(offset + 12, avsPixelToClipX(x3), avsPixelToClipY(y3), r, g, b, a);
-        writeAvsNeonVertex(offset + 18, avsPixelToClipX(x3), avsPixelToClipY(y3), r, g, b, a);
-        writeAvsNeonVertex(offset + 24, avsPixelToClipX(x2), avsPixelToClipY(y2), r, g, b, a);
-        writeAvsNeonVertex(offset + 30, avsPixelToClipX(x4), avsPixelToClipY(y4), r, g, b, a);
+        if (offset + 35 >= vertices.length) {
+            return vertexCount;
+        }
+        writeAvsVertex(vertices, offset, avsPixelToClipX(x1), avsPixelToClipY(y1), r, g, b, a);
+        writeAvsVertex(vertices, offset + 6, avsPixelToClipX(x2), avsPixelToClipY(y2), r, g, b, a);
+        writeAvsVertex(vertices, offset + 12, avsPixelToClipX(x3), avsPixelToClipY(y3), r, g, b, a);
+        writeAvsVertex(vertices, offset + 18, avsPixelToClipX(x3), avsPixelToClipY(y3), r, g, b, a);
+        writeAvsVertex(vertices, offset + 24, avsPixelToClipX(x2), avsPixelToClipY(y2), r, g, b, a);
+        writeAvsVertex(vertices, offset + 30, avsPixelToClipX(x4), avsPixelToClipY(y4), r, g, b, a);
         return vertexCount + 6;
     }
 
     function addAvsNeonSegment(vertexCount, start, end) {
+        return addAvsSegmentTo(avsNeonVertices, vertexCount, start, end, avsNeonLineWidthPx);
+    }
+
+    function addAvsSegmentTo(vertices, vertexCount, start, end, lineWidth) {
         var x1 = Math.trunc((start[0] + 1) * canvas.width * 0.5);
         var y1 = Math.trunc((start[1] + 1) * canvas.height * 0.5);
         var x2 = Math.trunc((end[0] + 1) * canvas.width * 0.5);
@@ -1212,25 +1542,48 @@
             return vertexCount;
         }
 
-        var lw2 = Math.floor(avsNeonLineWidthPx / 2);
+        var width = Math.max(1, Math.min(64, Math.round(lineWidth || 1)));
+        var lw2 = Math.floor(width / 2);
         var r = end[2];
         var g = end[3];
         var b = end[4];
         var a = end[5];
         if (!dx) {
-            return addAvsLineQuad(vertexCount, x1 - lw2, y1, x1 - lw2 + avsNeonLineWidthPx, y1,
-                    x2 - lw2, y2, x2 - lw2 + avsNeonLineWidthPx, y2, r, g, b, a);
+            return addAvsLineQuadTo(vertices, vertexCount, x1 - lw2, y1, x1 - lw2 + width, y1,
+                    x2 - lw2, y2, x2 - lw2 + width, y2, r, g, b, a);
         }
         if (!dy) {
-            return addAvsLineQuad(vertexCount, x1, y1 - lw2, x2, y2 - lw2,
-                    x1, y1 - lw2 + avsNeonLineWidthPx, x2, y2 - lw2 + avsNeonLineWidthPx, r, g, b, a);
+            return addAvsLineQuadTo(vertices, vertexCount, x1, y1 - lw2, x2, y2 - lw2,
+                    x1, y1 - lw2 + width, x2, y2 - lw2 + width, r, g, b, a);
         }
         if (dy <= dx) {
-            return addAvsLineQuad(vertexCount, x1, y1 - lw2, x2, y2 - lw2,
-                    x1, y1 - lw2 + avsNeonLineWidthPx, x2, y2 - lw2 + avsNeonLineWidthPx, r, g, b, a);
+            return addAvsLineQuadTo(vertices, vertexCount, x1, y1 - lw2, x2, y2 - lw2,
+                    x1, y1 - lw2 + width, x2, y2 - lw2 + width, r, g, b, a);
         }
-        return addAvsLineQuad(vertexCount, x1 - lw2, y1, x2 - lw2, y2,
-                x1 - lw2 + avsNeonLineWidthPx, y1, x2 - lw2 + avsNeonLineWidthPx, y2, r, g, b, a);
+        return addAvsLineQuadTo(vertices, vertexCount, x1 - lw2, y1, x2 - lw2, y2,
+                x1 - lw2 + width, y1, x2 - lw2 + width, y2, r, g, b, a);
+    }
+
+    function addAvsPointQuadTo(vertices, vertexCount, pointValue, lineWidth) {
+        var x = Math.trunc((pointValue[0] + 1) * canvas.width * 0.5);
+        var y = Math.trunc((pointValue[1] + 1) * canvas.height * 0.5);
+        var size = Math.max(2, Math.min(24, Math.round(lineWidth || 2)));
+        var half = Math.max(1, Math.floor(size / 2));
+        return addAvsLineQuadTo(vertices, vertexCount, x - half, y - half, x + half, y - half,
+                x - half, y + half, x + half, y + half,
+                pointValue[2], pointValue[3], pointValue[4], pointValue[5]);
+    }
+
+    function drawAvsVertices(vertices, vertexCount, blendMode) {
+        if (vertexCount <= 0) {
+            return;
+        }
+        gl.bufferData(gl.ARRAY_BUFFER, vertices.subarray(0, vertexCount * 6), gl.DYNAMIC_DRAW);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(blendMode === "maximum" ? gl.MAX : gl.FUNC_ADD);
+        gl.blendFunc(blendMode === "replace" ? gl.SRC_ALPHA : gl.ONE,
+                blendMode === "replace" ? gl.ONE_MINUS_SRC_ALPHA : gl.ONE);
+        gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
     }
 
     function renderNeonCoaster(now) {
@@ -1302,6 +1655,7 @@
             gl.clear(gl.COLOR_BUFFER_BIT);
             avsNeonFrameStarted = true;
         } else {
+            setAvsFadeAlpha(avsFastBrightnessFadeAlpha);
             gl.bufferData(gl.ARRAY_BUFFER, avsFadeVertices, gl.STATIC_DRAW);
             gl.enable(gl.BLEND);
             gl.blendEquation(gl.FUNC_ADD);
@@ -1363,6 +1717,7 @@
             canvas.width = width;
             canvas.height = height;
             avsNeonFrameStarted = false;
+            avsStackFrameStarted = false;
             if (gl) {
                 gl.viewport(0, 0, width, height);
             }
@@ -1465,6 +1820,7 @@
         return {
             name: preset.name,
             mode: preset.mode || "tunnel",
+            avsPresetId: preset.avsPresetId || "",
             shape: preset.shape,
             turn: preset.turn,
             twist: preset.twist,
@@ -1531,6 +1887,13 @@
         gl.uniform3f(locations.colorC, preset.colorC[0], preset.colorC[1], preset.colorC[2]);
     }
 
+    function renderProceduralTunnel(now) {
+        gl.useProgram(program);
+        bindTunnelGeometry();
+        applyPresetUniforms(now);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
     function render(now) {
         if (!running || !gl || !program) {
             return;
@@ -1554,9 +1917,8 @@
             smoothAudio();
         }
 
-        var useCoaster = isCoasterPreset();
         setCoasterVisible(false);
-        if (useCoaster) {
+        if (isCoasterPreset()) {
             try {
                 renderNeonCoaster(now);
             } catch (exception) {
@@ -1569,11 +1931,21 @@
             return;
         }
 
+        if (isAvsPreset()) {
+            try {
+                renderAvsPreset(now);
+            } catch (exception) {
+                running = false;
+                safeBridge("reportError", "avs_render_failed:" + exception.message);
+                return;
+            }
+            reportMetrics(now);
+            window.requestAnimationFrame(render);
+            return;
+        }
+
         try {
-            gl.useProgram(program);
-            bindTunnelGeometry();
-            applyPresetUniforms(now);
-            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            renderProceduralTunnel(now);
         } catch (exception) {
             running = false;
             safeBridge("reportError", "tunnel_render_failed:" + exception.message);
@@ -1613,6 +1985,7 @@
         transitionTo = copyPreset(presets[nextIndex]);
         transitionStartAt = performance.now();
         presetIndex = nextIndex;
+        resetAvsStackRuntime();
         if (presets[presetIndex].mode === "coaster") {
             resetAvsNeonState();
         }
