@@ -42,11 +42,16 @@ function assertFinite(value, label) {
 
 function makeHost() {
     const waveformSamples = new Float32Array(1024);
+    const spectrumSamples = new Float32Array(128);
     for (let index = 0; index < waveformSamples.length; index++) {
         waveformSamples[index] = Math.sin(index / 19) * 0.2;
     }
+    for (let index = 0; index < spectrumSamples.length; index++) {
+        spectrumSamples[index] = index / spectrumSamples.length;
+    }
     return {
         waveformSamples,
+        spectrumSamples,
         rms: 0.18,
         visualTimeSeconds: 12.5,
         getosc(position) {
@@ -55,6 +60,9 @@ function makeHost() {
                     0,
                     Math.min(waveformSamples.length - 1, Math.round(samplePosition * (waveformSamples.length - 1))));
             return waveformSamples[sampleIndex] || 0;
+        },
+        getspec(position, band) {
+            return 0.25 + position + band;
         }
     };
 }
@@ -82,6 +90,7 @@ function testScalarRuntime(avsEel) {
         "q=if(0,2,3);",
         "r=10%3;",
         "s=getosc(.25,0,0);",
+        "sa=getspec(.25,.1,0);",
         "t=tan(.5);",
         "u=asin(.5);",
         "v=atan(1);",
@@ -116,7 +125,7 @@ function testScalarRuntime(avsEel) {
     ].join("\n"));
 
     const scope = {};
-    const host = { getosc: () => 0.42 };
+    const host = { getosc: () => 0.42, getspec: (position, band) => 0.25 + position + band };
     runtime.run(scope, host);
 
     assertEqual(scope.x, 7, "scalar precedence");
@@ -140,6 +149,7 @@ function testScalarRuntime(avsEel) {
     assertEqual(scope.q, 3, "scalar if");
     assertEqual(scope.r, 1, "scalar modulo");
     assertEqual(scope.s, 0.42, "scalar getosc");
+    assertAlmost(scope.sa, 0.60, "scalar getspec");
     assertAlmost(scope.t, Math.tan(0.5), "scalar tan");
     assertAlmost(scope.u, Math.asin(0.5), "scalar asin");
     assertAlmost(scope.v, Math.atan(1), "scalar atan");
@@ -178,7 +188,7 @@ function testSlotRuntime(avsEel) {
         init: "n=4;t=0;",
         frame: "t+=1;w=w/h;",
         beat: "t+=10;",
-        point: "i=i*2;x=sin(i)+pow(2,3)+(0x4&7);y=cos(i)+floor(1.8)+(2|4);red=i<1;green=(i>.5)&&!0;blue=if(red,.25,.75)+bitand(7,3)+(i>=.5);"
+        point: "i=i*2;x=sin(i)+pow(2,3)+(0x4&7)+getspec(.2,.1,0);y=cos(i)+floor(1.8)+(2|4)+getspec(.2);red=i<1;green=(i>.5)&&!0;blue=if(red,.25,.75)+bitand(7,3)+(i>=.5);"
     });
     const scope = runtime.createScope({ w: 1920, h: 1080 });
     const host = makeHost();
@@ -193,8 +203,8 @@ function testSlotRuntime(avsEel) {
 
     runtime.setSlot(scope, slots.i, 0.25);
     runtime.point.run(scope, host);
-    assertAlmost(runtime.getSlot(scope, slots.x), Math.sin(0.5) + 12, "slot point x");
-    assertAlmost(runtime.getSlot(scope, slots.y), Math.cos(0.5) + 7, "slot point y");
+    assertAlmost(runtime.getSlot(scope, slots.x), Math.sin(0.5) + 12.55, "slot point x");
+    assertAlmost(runtime.getSlot(scope, slots.y), Math.cos(0.5) + 7.45, "slot point y");
     assertEqual(runtime.getSlot(scope, slots.red), 1, "slot point red");
     assertEqual(runtime.getSlot(scope, slots.green), 0, "slot point green");
     assertEqual(runtime.getSlot(scope, slots.blue), 4.25, "slot point blue");

@@ -70,6 +70,7 @@ public class ButterchurnVisualizerHost extends FrameLayout {
     private WinampVisualizerView fallbackView;
     private Visualizer visualizer;
     private byte[] latestWaveform;
+    private byte[] latestFft;
     private long latestAudioTimestampMs;
     private long lowRmsStartedMs = -1;
     private long lastAudioDelayLogMs;
@@ -281,9 +282,9 @@ public class ButterchurnVisualizerHost extends FrameLayout {
 
                 @Override
                 public void onFftDataCapture(Visualizer visualizer, byte[] fft, int samplingRate) {
-                    // Butterchurn only needs time-domain samples; it computes FFT internally.
+                    handleFft(fft);
                 }
-            }, Visualizer.getMaxCaptureRate() / 2, true, false);
+            }, Visualizer.getMaxCaptureRate() / 2, true, true);
             visualizer.setEnabled(true);
         } catch (RuntimeException exception) {
             Log.w(TAG, "Unable to start Android Visualizer capture", exception);
@@ -325,12 +326,29 @@ public class ButterchurnVisualizerHost extends FrameLayout {
         }
     }
 
+    private void handleFft(byte[] fft) {
+        if (fft == null || fft.length == 0) {
+            return;
+        }
+
+        byte[] copy = fft.length > MAX_AUDIO_FRAME_BYTES
+                ? trimAudioFrame(fft)
+                : fft.clone();
+        synchronized (audioLock) {
+            latestFft = copy;
+        }
+    }
+
     private byte[] trimWaveform(byte[] waveform) {
+        return trimAudioFrame(waveform);
+    }
+
+    private byte[] trimAudioFrame(byte[] audioFrame) {
         byte[] trimmed = new byte[MAX_AUDIO_FRAME_BYTES];
         for (int index = 0; index < trimmed.length; index++) {
-            int sourceIndex = Math.min(waveform.length - 1,
-                    Math.round(index * (waveform.length - 1f) / Math.max(1, trimmed.length - 1)));
-            trimmed[index] = waveform[sourceIndex];
+            int sourceIndex = Math.min(audioFrame.length - 1,
+                    Math.round(index * (audioFrame.length - 1f) / Math.max(1, trimmed.length - 1)));
+            trimmed[index] = audioFrame[sourceIndex];
         }
         return trimmed;
     }
@@ -380,6 +398,7 @@ public class ButterchurnVisualizerHost extends FrameLayout {
         }
 
         byte[] waveform = null;
+        byte[] fft = null;
         long timestampMs;
         boolean synthetic;
         synchronized (audioLock) {
@@ -387,21 +406,27 @@ public class ButterchurnVisualizerHost extends FrameLayout {
             synthetic = usingSynthetic || latestWaveform == null;
             if (!synthetic) {
                 waveform = latestWaveform.clone();
+                if (latestFft != null) {
+                    fft = latestFft.clone();
+                }
             }
         }
 
         String script;
         if (waveform != null) {
             String encoded = Base64.encodeToString(waveform, Base64.NO_WRAP);
+            String encodedFft = fft == null ? "" : Base64.encodeToString(fft, Base64.NO_WRAP);
             script = "window.braviaVisualizer&&window.braviaVisualizer.consumeAudio("
                     + timestampMs
                     + ",'"
                     + encoded
-                    + "','real');";
+                    + "','real','"
+                    + encodedFft
+                    + "');";
         } else {
             script = "window.braviaVisualizer&&window.braviaVisualizer.consumeAudio("
                     + System.currentTimeMillis()
-                    + ",'','synthetic');";
+                    + ",'','synthetic','');";
         }
         webView.evaluateJavascript(script, null);
         mainHandler.postDelayed(audioPushRunnable, AUDIO_PUSH_INTERVAL_MS);

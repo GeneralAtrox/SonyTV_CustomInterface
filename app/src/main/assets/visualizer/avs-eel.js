@@ -62,6 +62,7 @@
     var OP_NOT = 30;
     var OP_BITOR = 31;
     var OP_BITAND = 32;
+    var OP_GETSPEC1 = 33;
 
     var FN_IF = 1;
     var FN_SIN = 2;
@@ -96,6 +97,7 @@
     var FN_BITOR = 31;
     var FN_BITAND = 32;
     var FN_INVSQRT = 33;
+    var FN_GETSPEC = 34;
 
     function tokenize(source) {
         var tokens = [];
@@ -606,6 +608,9 @@
                     ? finite(host.getosc(first || 0, second || 0, count > 2 ? stack[start + 2] : 0))
                     : 0;
         }
+        if (name === "getspec") {
+            return readSpec(host, first || 0, second || 0, count > 2 ? stack[start + 2] : 0);
+        }
         return 0;
     }
 
@@ -780,6 +785,9 @@
         if (name === "getosc") {
             return FN_GETOSC;
         }
+        if (name === "getspec") {
+            return FN_GETSPEC;
+        }
         return 0;
     }
 
@@ -895,6 +903,9 @@
             return host && typeof host.getosc === "function"
                     ? finite(host.getosc(first || 0, second || 0, count > 2 ? stack[start + 2] : 0))
                     : 0;
+        }
+        if (id === FN_GETSPEC) {
+            return readSpec(host, first || 0, second || 0, count > 2 ? stack[start + 2] : 0);
         }
         return 0;
     }
@@ -1039,6 +1050,11 @@
         if (node.name === "getosc" && node.args.length >= 1) {
             compileExpressionSlots(node.args[0], ops, variableIndex);
             ops.push(OP_GETOSC1);
+            return true;
+        }
+        if (node.name === "getspec" && node.args.length === 1) {
+            compileExpressionSlots(node.args[0], ops, variableIndex);
+            ops.push(OP_GETSPEC1);
             return true;
         }
         return false;
@@ -1195,6 +1211,9 @@
                 case OP_GETOSC1:
                     stack[sp - 1] = readOsc(host, stack[sp - 1] || 0);
                     break;
+                case OP_GETSPEC1:
+                    stack[sp - 1] = readSpec(host, stack[sp - 1] || 0, 0, 0);
+                    break;
             }
         }
     }
@@ -1215,6 +1234,25 @@
             return Math.sin((host.visualTimeSeconds || 0) * 2.4 + samplePosition * Math.PI * 2) * rms;
         }
         return sample || 0;
+    }
+
+    function readSpec(host, position, band, channel) {
+        if (!host) {
+            return 0;
+        }
+        if (typeof host.getspec === "function") {
+            return finite(host.getspec(position || 0, band || 0, channel || 0));
+        }
+        var samplePosition = position - Math.floor(position);
+        var spectrum = host.spectrumSamples;
+        if (spectrum && spectrum.length) {
+            var index = Math.max(0, Math.min(spectrum.length - 1,
+                    Math.round(samplePosition * (spectrum.length - 1))));
+            return finite(spectrum[index] || 0);
+        }
+        var rms = host.rms || 0;
+        return finite(Math.abs(Math.sin((host.visualTimeSeconds || 0) * 1.7
+                + samplePosition * Math.PI * 8)) * rms);
     }
 
     function compileSlotProgram(source, variableIndex) {

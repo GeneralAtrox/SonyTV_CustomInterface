@@ -28,6 +28,7 @@
     var frameTimes = [];
     var presetIndex = 0;
     var audioSize = 1024;
+    var spectrumSize = 128;
     var lastAudioTimestampMs = 0;
     var transitionDurationMs = 950;
     var maxVisualDeltaMs = 50;
@@ -44,6 +45,10 @@
         targetTreb: 0.10
     };
     var waveformSamples = new Float32Array(audioSize);
+    var spectrumSamples = new Float32Array(spectrumSize);
+    var spectrumTargets = new Float32Array(spectrumSize);
+    var spectrumRawTargets = new Float32Array(spectrumSize);
+    var spectrumCeiling = 0.18;
     var avsNeonState = null;
     var avsNeonSampleCount = neonCoasterDefinition && neonCoasterDefinition.superScope
             && neonCoasterDefinition.superScope.sampleCount
@@ -556,6 +561,56 @@
         return sample;
     }
 
+    function frequencyCurve(position) {
+        var clamped = clamp(position, 0, 1);
+        var curve = Math.pow(2, clamped * 3.6) - 1;
+        return curve / (Math.pow(2, 3.6) - 1);
+    }
+
+    function signedByte(value) {
+        return value > 127 ? value - 256 : value;
+    }
+
+    function fftMagnitude(bytes, bin) {
+        var realIndex = Math.min(bytes.length - 1, bin * 2);
+        var imagIndex = Math.min(bytes.length - 1, bin * 2 + 1);
+        return Math.min(1.6, Math.hypot(signedByte(bytes[realIndex]), signedByte(bytes[imagIndex])) / 128);
+    }
+
+    function smoothSpectrumTargets() {
+        for (var index = 0; index < spectrumSamples.length; index++) {
+            var target = spectrumTargets[index];
+            var previous = spectrumSamples[index];
+            var smoothing = target > previous ? 0.64 : 0.26;
+            spectrumSamples[index] = previous + (target - previous) * smoothing;
+        }
+    }
+
+    function getSpec(position, band, channel) {
+        if (!spectrumSamples || spectrumSamples.length === 0) {
+            return 0;
+        }
+        var samplePosition = wrap01(position);
+        var width = Math.max(0, Math.min(0.5, Math.abs(band || 0)));
+        if (width < 0.001) {
+            var index = clamp(Math.round(samplePosition * (spectrumSamples.length - 1)),
+                    0, spectrumSamples.length - 1);
+            return spectrumSamples[index] || 0;
+        }
+
+        var center = samplePosition * (spectrumSamples.length - 1);
+        var radius = Math.max(1, Math.round(width * spectrumSamples.length));
+        var sum = 0;
+        var weightSum = 0;
+        for (var offset = -radius; offset <= radius; offset++) {
+            var readIndex = clamp(Math.round(center + offset), 0, spectrumSamples.length - 1);
+            var weight = 1 - Math.abs(offset) / (radius + 1);
+            sum += (spectrumSamples[readIndex] || 0) * weight;
+            weightSum += weight;
+        }
+        return weightSum > 0 ? sum / weightSum : 0;
+    }
+
     function defaultAvsLineMode() {
         return {
             blendMode: "maximum",
@@ -887,14 +942,19 @@
         if (!avsNeonHost) {
             avsNeonHost = {
                 waveformSamples: waveformSamples,
+                spectrumSamples: spectrumSamples,
                 rms: audio.rms,
                 visualTimeSeconds: visualTimeSeconds,
                 getosc: function (position) {
                     return getOsc(position);
+                },
+                getspec: function (position, band, channel) {
+                    return getSpec(position, band, channel);
                 }
             };
         }
         avsNeonHost.waveformSamples = waveformSamples;
+        avsNeonHost.spectrumSamples = spectrumSamples;
         avsNeonHost.rms = audio.rms;
         avsNeonHost.visualTimeSeconds = visualTimeSeconds;
         return avsNeonHost;
@@ -1779,6 +1839,65 @@
         return true;
     }
 
+    function updateSpectrumTargetsFromFft(bytes) {
+        if (!bytes || bytes.length < 8) {
+            return false;
+        }
+
+        var halfBins = Math.max(1, Math.floor(bytes.length / 2) - 1);
+        var maxBin = Math.min(halfBins, Math.max(spectrumSize + 2, Math.floor(bytes.length / 12)));
+        var framePeak = 0;
+        for (var index = 0; index < spectrumSize; index++) {
+            var start = index / Math.max(1, spectrumSize);
+            var end = (index + 1) / Math.max(1, spectrumSize);
+            var startBin = 1 + Math.round(frequencyCurve(start) * (maxBin - 1));
+            var endBin = 1 + Math.round(frequencyCurve(end) * (maxBin - 1));
+            endBin = Math.max(startBin, endBin);
+
+            var sum = 0;
+            var peak = 0;
+            var count = 0;
+            for (var bin = startBin; bin <= endBin; bin++) {
+                var magnitude = fftMagnitude(bytes, bin);
+                sum += magnitude;
+                peak = Math.max(peak, magnitude);
+                count++;
+            }
+
+            var average = count > 0 ? sum / count : 0;
+            var raw = average * 0.72 + peak * 0.28;
+            spectrumRawTargets[index] = raw;
+            framePeak = Math.max(framePeak, raw);
+        }
+
+        var targetCeiling = Math.max(0.10, framePeak * 1.85);
+        spectrumCeiling += (targetCeiling - spectrumCeiling) * (targetCeiling > spectrumCeiling ? 0.24 : 0.035);
+        var ceiling = Math.max(0.10, spectrumCeiling);
+        for (var targetIndex = 0; targetIndex < spectrumSize; targetIndex++) {
+            var normalized = clamp(spectrumRawTargets[targetIndex] / ceiling, 0, 1.4);
+            spectrumTargets[targetIndex] = Math.pow(normalized, 1.18);
+        }
+        smoothSpectrumTargets();
+        return true;
+    }
+
+    function updateSpectrumTargetsFromEnergy(now) {
+        var t = now * 0.001;
+        var peak = 0;
+        for (var index = 0; index < spectrumSize; index++) {
+            var position = index / Math.max(1, spectrumSize - 1);
+            var bass = Math.max(0, 1 - position * 4.0) * audio.targetBass;
+            var mid = Math.max(0, 1 - Math.abs(position - 0.34) * 3.2) * audio.targetMid;
+            var treb = Math.max(0, 1 - Math.abs(position - 0.76) * 2.4) * audio.targetTreb;
+            var ripple = 0.12 * Math.abs(Math.sin(t * 2.8 + index * 0.31));
+            var target = Math.min(1.15, bass * 0.90 + mid * 0.74 + treb * 0.66 + ripple * audio.targetRms);
+            spectrumTargets[index] = target;
+            peak = Math.max(peak, target);
+        }
+        spectrumCeiling += (Math.max(0.10, peak) - spectrumCeiling) * 0.06;
+        smoothSpectrumTargets();
+    }
+
     function updateSyntheticTargets(now) {
         var t = now * 0.001;
         audio.targetRms = 0.30 + 0.18 * Math.sin(t * 1.30);
@@ -1790,6 +1909,7 @@
             waveformSamples[i] = Math.sin(t * 2.2 + phase * Math.PI * 2) * 0.32
                     + Math.sin(t * 4.7 + phase * Math.PI * 8) * 0.10;
         }
+        updateSpectrumTargetsFromEnergy(now);
     }
 
     function smoothAudio() {
@@ -2080,13 +2200,19 @@
     }
 
     window.braviaVisualizer = {
-        consumeAudio: function (timestampMs, base64, mode) {
+        consumeAudio: function (timestampMs, base64, mode, fftBase64) {
             var applied = false;
+            var spectrumApplied = false;
             if (mode === "real" && base64) {
                 applied = updateAudioTargetsFromWaveform(decodeBase64(base64));
             }
+            if (mode === "real" && fftBase64) {
+                spectrumApplied = updateSpectrumTargetsFromFft(decodeBase64(fftBase64));
+            }
             if (!applied) {
                 updateSyntheticTargets(performance.now());
+            } else if (!spectrumApplied) {
+                updateSpectrumTargetsFromEnergy(performance.now());
             }
             lastAudioTimestampMs = Math.max(0, Number(timestampMs) || 0);
             if (lastAudioTimestampMs > 0) {
