@@ -460,6 +460,55 @@ function decodeColorFade(config) {
     };
 }
 
+function decodeBump(config) {
+    const settings = {
+        enabled: readInt32At(config, 0, 1),
+        onBeat: readInt32At(config, 4, 0),
+        durationFrames: readInt32At(config, 8, 15),
+        depth: readInt32At(config, 12, 30),
+        beatDepth: readInt32At(config, 16, 100),
+        blend: readInt32At(config, 20, 0),
+        blendAverage: readInt32At(config, 24, 0),
+        eel: {
+            frame: "x=0.5+cos(t)*0.3;\ny=0.5+sin(t)*0.3;\nt=t+0.1;",
+            beat: "",
+            init: "t=0;"
+        },
+        showLight: 0,
+        invert: 0,
+        oldStyle: 0,
+        bufferNumber: 0,
+        ints: previewInts(config)
+    };
+    let offset = 28;
+    if (offset < config.length) {
+        const frame = readSizedStringAt(config, offset);
+        if (frame.nextOffset !== offset) {
+            settings.eel.frame = stripRuntimeIrrelevantEel(frame.value);
+            offset = frame.nextOffset;
+        }
+    }
+    if (offset < config.length) {
+        const beat = readSizedStringAt(config, offset);
+        if (beat.nextOffset !== offset) {
+            settings.eel.beat = stripRuntimeIrrelevantEel(beat.value);
+            offset = beat.nextOffset;
+        }
+    }
+    if (offset < config.length) {
+        const init = readSizedStringAt(config, offset);
+        if (init.nextOffset !== offset) {
+            settings.eel.init = stripRuntimeIrrelevantEel(init.value);
+            offset = init.nextOffset;
+        }
+    }
+    settings.showLight = readInt32At(config, offset, 0);
+    settings.invert = readInt32At(config, offset + 4, 0);
+    settings.oldStyle = readInt32At(config, offset + 8, config.length >= offset + 12 ? 0 : 1);
+    settings.bufferNumber = readInt32At(config, offset + 12, 0);
+    return settings;
+}
+
 function decodeEelBlockConfig(config) {
     const settings = {
         marker: config.length > 0 ? config[0] : 0,
@@ -568,7 +617,7 @@ function decodeEffectSettings(effectId, config) {
         return decodeBufferSave(config);
     }
     if (effectId === 20) {
-        return decodeIntegerConfig(config, ["enabled", "onBeat", "durationFrames", "depth", "beatDepth", "blend", "blendAverage"]);
+        return decodeBump(config);
     }
     if (effectId === 12) {
         return decodeScatter(config);

@@ -137,11 +137,20 @@ window.braviaAvsPresetDefinitions["zeroGMazeII"] = {
                     "settings": {
                         "enabled": 1,
                         "onBeat": 0,
-                        "durationFrames": 0,
-                        "depth": 0,
-                        "beatDepth": 0,
+                        "durationFrames": 15,
+                        "depth": 30,
+                        "beatDepth": 100,
                         "blend": 0,
                         "blendAverage": 0,
+                        "eel": {
+                            "frame": "x=0.5+cos(t)*0.3;\ny=0.5+sin(t)*0.3;\nt=t+0.1;",
+                            "beat": "",
+                            "init": "t=0;"
+                        },
+                        "showLight": 0,
+                        "invert": 0,
+                        "oldStyle": 1,
+                        "bufferNumber": 0,
                         "ints": [
                             1
                         ]

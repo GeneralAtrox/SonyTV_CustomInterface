@@ -33,6 +33,8 @@
     var avsFeedbackLocations = {};
     var avsColorFadeProgram = null;
     var avsColorFadeLocations = {};
+    var avsBumpProgram = null;
+    var avsBumpLocations = {};
     var avsFramebufferState = null;
     var running = false;
     var paused = false;
@@ -591,6 +593,56 @@
         + "    outColor = vec4(clamp(rgb + delta, 0.0, 255.0) / 255.0, source.a);\n"
         + "}\n";
 
+    var avsBumpFragmentSource = "#version 300 es\n"
+        + "precision highp float;\n"
+        + "in vec2 v_uv;\n"
+        + "uniform sampler2D u_texture;\n"
+        + "uniform sampler2D u_depthTexture;\n"
+        + "uniform vec2 u_resolution;\n"
+        + "uniform vec2 u_light;\n"
+        + "uniform float u_depth;\n"
+        + "uniform float u_invert;\n"
+        + "uniform float u_blend;\n"
+        + "uniform float u_blendAverage;\n"
+        + "out vec4 outColor;\n"
+        + "vec3 clampColor(vec3 value) {\n"
+        + "    return clamp(value, vec3(0.0), vec3(1.0));\n"
+        + "}\n"
+        + "float depthOf(vec2 uv) {\n"
+        + "    vec3 c = texture(u_depthTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb * 255.0;\n"
+        + "    float d = max(c.r, max(c.g, c.b));\n"
+        + "    return u_invert > 0.5 ? 255.0 - d : d;\n"
+        + "}\n"
+        + "void main() {\n"
+        + "    vec2 pixel = floor(v_uv * u_resolution);\n"
+        + "    vec4 source = texture(u_texture, v_uv);\n"
+        + "    if (pixel.x <= 0.5 || pixel.y <= 0.5 || pixel.x >= u_resolution.x - 1.5 || pixel.y >= u_resolution.y - 1.5) {\n"
+        + "        outColor = vec4(0.0, 0.0, 0.0, source.a);\n"
+        + "        return;\n"
+        + "    }\n"
+        + "    vec2 texel = 1.0 / max(u_resolution, vec2(1.0));\n"
+        + "    float left = depthOf(v_uv - vec2(texel.x, 0.0));\n"
+        + "    float right = depthOf(v_uv + vec2(texel.x, 0.0));\n"
+        + "    float up = depthOf(v_uv - vec2(0.0, texel.y));\n"
+        + "    float down = depthOf(v_uv + vec2(0.0, texel.y));\n"
+        + "    float lx = pixel.x - u_light.x;\n"
+        + "    float ly = pixel.y - u_light.y;\n"
+        + "    float cx = 127.0 - abs((right - left) - lx);\n"
+        + "    float cy = 127.0 - abs((down - up) - ly);\n"
+        + "    vec3 shaded = min(source.rgb * 255.0, vec3(254.0));\n"
+        + "    if (cx > 0.0 && cy > 0.0) {\n"
+        + "        float lift = floor(cx * cy * u_depth / 16384.0);\n"
+        + "        shaded = min(source.rgb * 255.0 + lift, vec3(254.0));\n"
+        + "    }\n"
+        + "    vec3 result = shaded / 255.0;\n"
+        + "    if (u_blend > 0.5) {\n"
+        + "        result = clampColor(source.rgb + result);\n"
+        + "    } else if (u_blendAverage > 0.5) {\n"
+        + "        result = (source.rgb + result) * 0.5;\n"
+        + "    }\n"
+        + "    outColor = vec4(result, source.a);\n"
+        + "}\n";
+
     var locations = {};
 
     function safeBridge(method) {
@@ -943,7 +995,7 @@
 
     function ensureAvsFramebuffers() {
         if (!gl || !avsCopyProgram || !avsBlendProgram || !avsWarpProgram || !avsFeedbackProgram
-                || !avsColorFadeProgram
+                || !avsColorFadeProgram || !avsBumpProgram
                 || !quadBuffer || !avsWarpBuffer
                 || canvas.width <= 0 || canvas.height <= 0) {
             return null;
@@ -1284,6 +1336,7 @@
         sampleCount = normalizeAvsSampleCount(suite.getSlot(scope, slots.n), sampleCount);
         return {
             kind: kind,
+            settings: settings || {},
             suite: suite,
             scope: scope,
             slots: slots,
@@ -1379,12 +1432,16 @@
                     phase: 0
                 });
             } else if (effect.type === "bump") {
-                addAvsRuntimeRenderer(runtime, nodes, {
-                    kind: "bump",
-                    settings: effect.settings || {},
-                    phase: 0,
-                    beatDepth: 0
-                });
+                if (effect.settings && effect.settings.eel) {
+                    addAvsRuntimeRenderer(runtime, nodes, createAvsEelRenderer("bump", effect.settings,
+                            0, "points", context.lineMode, [createAvsColor(0xffffff)], null));
+                } else {
+                    addAvsRuntimeRenderer(runtime, nodes, {
+                        kind: "bump",
+                        settings: effect.settings || {},
+                        bumpState: null
+                    });
+                }
             } else if (effect.type === "scatter") {
                 addAvsRuntimeRenderer(runtime, nodes, {
                     kind: "scatter",
@@ -1958,51 +2015,83 @@
         if (renderer.settings && renderer.settings.enabled === 0) {
             return;
         }
-        var baseDepth = renderer.settings && renderer.settings.depth
-                ? clamp(renderer.settings.depth / 100, 0.05, 1)
-                : 0.30;
-        var beatDepth = renderer.settings && renderer.settings.beatDepth
-                ? clamp(renderer.settings.beatDepth / 100, 0.05, 1)
-                : baseDepth * 1.4;
-        if (isBeat) {
-            renderer.beatDepth = beatDepth;
+        var state = ensureAvsFramebuffers();
+        if (!state || !avsBumpProgram) {
+            return;
         }
-        renderer.beatDepth *= 0.88;
-        renderer.phase = wrap01((renderer.phase || 0) + 0.010 + audio.bass * 0.014);
+        var settings = renderer.settings || {};
+        if (!renderer.bumpState) {
+            renderer.bumpState = {
+                t: 0,
+                x: settings.oldStyle ? 50 : 0.5,
+                y: settings.oldStyle ? 50 : 0.5,
+                framesRemaining: 0,
+                currentDepth: settings.depth == null ? 30 : settings.depth
+            };
+        }
+        var bumpState = renderer.bumpState;
+        var baseDepth = settings.depth == null ? 30 : settings.depth;
+        var beatDepth = settings.beatDepth == null ? 100 : settings.beatDepth;
+        var durationFrames = Math.max(1, Math.round(settings.durationFrames == null
+                ? 15
+                : settings.durationFrames));
+        if (settings.onBeat && isBeat) {
+            bumpState.currentDepth = beatDepth;
+            bumpState.framesRemaining = durationFrames;
+        } else if (!bumpState.framesRemaining) {
+            bumpState.currentDepth = baseDepth;
+        }
 
-        var depth = Math.max(baseDepth, renderer.beatDepth || 0);
-        applyAvsFeedbackPass(1, depth * 0.78 + audio.bass * 0.16, visualTimeSeconds + (isBeat ? 0.37 : 0));
-        var segments = 40;
-        var rings = 3;
-        ensureAvsStackVertexCapacity(segments * rings, 6);
-        var vertexCount = 0;
-        var start = avsStackPreviousScratch;
-        var end = avsStackPointScratch;
-        for (var ring = 0; ring < rings; ring++) {
-            var radius = 0.16 + wrap01(renderer.phase + ring / rings) * 1.18;
-            var alpha = (1 - ring / rings) * depth * 0.10;
-            var wobble = visualTimeSeconds * (0.35 + ring * 0.11);
-            for (var segment = 0; segment < segments; segment++) {
-                var a0 = segment / segments * Math.PI * 2;
-                var a1 = (segment + 1) / segments * Math.PI * 2;
-                var r0 = radius + Math.sin(a0 * 3 + wobble) * 0.018;
-                var r1 = radius + Math.sin(a1 * 3 + wobble) * 0.018;
-                start[0] = Math.cos(a0) * r0;
-                start[1] = Math.sin(a0) * r0;
-                start[2] = 0.05;
-                start[3] = 0.22 + audio.mid * 0.08;
-                start[4] = 0.24 + audio.treb * 0.10;
-                start[5] = alpha;
-                end[0] = Math.cos(a1) * r1;
-                end[1] = Math.sin(a1) * r1;
-                end[2] = start[2];
-                end[3] = start[3];
-                end[4] = start[4];
-                end[5] = alpha;
-                vertexCount = addAvsSegmentTo(avsStackVertices, vertexCount, start, end, 1);
+        if (renderer.suite && renderer.scope && renderer.slots) {
+            if (!prepareAvsFrameProgram(renderer, isBeat)) {
+                return;
+            }
+            bumpState.x = renderer.slots.x >= 0 ? renderer.suite.getSlot(renderer.scope, renderer.slots.x) || 0 : bumpState.x;
+            bumpState.y = renderer.slots.y >= 0 ? renderer.suite.getSlot(renderer.scope, renderer.slots.y) || 0 : bumpState.y;
+        } else {
+            bumpState.x = 0.5 + Math.cos(bumpState.t) * 0.3;
+            bumpState.y = 0.5 + Math.sin(bumpState.t) * 0.3;
+            bumpState.t += 0.1;
+        }
+        var lightX = clamp(settings.oldStyle ? bumpState.x / 100 : bumpState.x, 0, 1) * state.width;
+        var lightY = clamp(settings.oldStyle ? bumpState.y / 100 : bumpState.y, 0, 1) * state.height;
+        var depth = clamp(bumpState.currentDepth, 0, 100) * 2.56;
+
+        var depthTarget = settings.bufferNumber > 0
+                ? ensureAvsGlobalBuffer(settings.bufferNumber - 1, false)
+                : state.front;
+        var depthTexture = depthTarget ? depthTarget.texture : state.front.texture;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, state.scratch.framebuffer);
+        gl.viewport(0, 0, state.scratch.width, state.scratch.height);
+        gl.useProgram(avsBumpProgram);
+        bindAvsQuad(avsBumpLocations.position);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, state.front.texture);
+        gl.uniform1i(avsBumpLocations.texture, 0);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, depthTexture);
+        gl.uniform1i(avsBumpLocations.depthTexture, 1);
+        gl.uniform2f(avsBumpLocations.resolution, state.width, state.height);
+        gl.uniform2f(avsBumpLocations.light, lightX, lightY);
+        gl.uniform1f(avsBumpLocations.depth, depth);
+        gl.uniform1f(avsBumpLocations.invert, settings.invert ? 1 : 0);
+        gl.uniform1f(avsBumpLocations.blend, settings.blend ? 1 : 0);
+        gl.uniform1f(avsBumpLocations.blendAverage, settings.blendAverage ? 1 : 0);
+        gl.disable(gl.BLEND);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.activeTexture(gl.TEXTURE0);
+        swapAvsFramebuffers();
+        bindAvsLineTarget(avsFramebufferState.front);
+
+        if (bumpState.framesRemaining) {
+            bumpState.framesRemaining--;
+            if (bumpState.framesRemaining) {
+                var step = Math.abs(baseDepth - beatDepth) / durationFrames;
+                bumpState.currentDepth += step * (beatDepth > baseDepth ? -1 : 1);
             }
         }
-        drawAvsVertices(avsStackVertices, vertexCount, "additive");
     }
 
     function renderAvsOscilloscopeStarRenderer(renderer) {
@@ -3523,6 +3612,10 @@
         return createLinkedProgram(vertexSource, avsColorFadeFragmentSource);
     }
 
+    function createAvsBumpProgram() {
+        return createLinkedProgram(vertexSource, avsBumpFragmentSource);
+    }
+
     function resize() {
         var ratio = currentRenderScale();
         var width = Math.max(320, Math.floor(window.innerWidth * ratio));
@@ -3937,6 +4030,15 @@
         avsColorFadeLocations.position = gl.getAttribLocation(avsColorFadeProgram, "a_position");
         avsColorFadeLocations.texture = gl.getUniformLocation(avsColorFadeProgram, "u_texture");
         avsColorFadeLocations.faders = gl.getUniformLocation(avsColorFadeProgram, "u_faders");
+        avsBumpLocations.position = gl.getAttribLocation(avsBumpProgram, "a_position");
+        avsBumpLocations.texture = gl.getUniformLocation(avsBumpProgram, "u_texture");
+        avsBumpLocations.depthTexture = gl.getUniformLocation(avsBumpProgram, "u_depthTexture");
+        avsBumpLocations.resolution = gl.getUniformLocation(avsBumpProgram, "u_resolution");
+        avsBumpLocations.light = gl.getUniformLocation(avsBumpProgram, "u_light");
+        avsBumpLocations.depth = gl.getUniformLocation(avsBumpProgram, "u_depth");
+        avsBumpLocations.invert = gl.getUniformLocation(avsBumpProgram, "u_invert");
+        avsBumpLocations.blend = gl.getUniformLocation(avsBumpProgram, "u_blend");
+        avsBumpLocations.blendAverage = gl.getUniformLocation(avsBumpProgram, "u_blendAverage");
     }
 
     function initLocations() {
@@ -3975,6 +4077,7 @@
             avsWarpProgram = createAvsWarpProgram();
             avsFeedbackProgram = createAvsFeedbackProgram();
             avsColorFadeProgram = createAvsColorFadeProgram();
+            avsBumpProgram = createAvsBumpProgram();
             gl.useProgram(program);
             initGeometry();
             initLineGeometry();
