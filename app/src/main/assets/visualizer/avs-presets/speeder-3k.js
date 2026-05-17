@@ -2,7 +2,7 @@
 // This file contains structured AVS preset data, not executable EEL code.
 window.braviaAvsPresetDefinitions = window.braviaAvsPresetDefinitions || {};
 window.braviaAvsPresetDefinitions["speeder3K"] = {
-    "schemaVersion": 2,
+    "schemaVersion": 3,
     "id": "speeder3K",
     "displayName": "UnConeD Speeder 3K",
     "source": {
@@ -10,7 +10,12 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
         "fileName": "UnConeD - Speeder 3K.avs"
     },
     "root": {
-        "mode": 0
+        "modeRaw": 0,
+        "clearFrameBuffer": false,
+        "enabled": true,
+        "blendInMode": 0,
+        "blendOutMode": 1,
+        "extendedDataSize": 0
     },
     "effectOrder": [
         {
@@ -182,6 +187,23 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
             "sourceOffset": 1106,
             "configLength": 590,
             "opaque": false,
+            "settings": {
+                "modeRaw": 604045312,
+                "clearFrameBuffer": false,
+                "enabled": true,
+                "blendInMode": 0,
+                "blendOutMode": 0,
+                "extendedDataSize": 36,
+                "nestedOffset": 37,
+                "inBlendValue": 128,
+                "outBlendValue": 128,
+                "bufferIn": 0,
+                "bufferOut": 0,
+                "inInvert": 0,
+                "outInvert": 0,
+                "beatRender": 0,
+                "beatRenderFrames": 1
+            },
             "nestedOffset": 37,
             "effects": [
                 {

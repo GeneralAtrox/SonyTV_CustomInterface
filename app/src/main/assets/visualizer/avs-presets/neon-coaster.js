@@ -2,7 +2,7 @@
 // This file contains structured AVS preset data, not executable EEL code.
 window.braviaAvsPresetDefinitions = window.braviaAvsPresetDefinitions || {};
 window.braviaAvsPresetDefinitions["neonCoaster"] = {
-    "schemaVersion": 2,
+    "schemaVersion": 3,
     "id": "neonCoaster",
     "displayName": "UnConeD Neon Coaster",
     "source": {
@@ -10,7 +10,12 @@ window.braviaAvsPresetDefinitions["neonCoaster"] = {
         "fileName": "UnConeD - Neon Coaster.avs"
     },
     "root": {
-        "mode": 0
+        "modeRaw": 0,
+        "clearFrameBuffer": false,
+        "enabled": true,
+        "blendInMode": 0,
+        "blendOutMode": 1,
+        "extendedDataSize": 0
     },
     "effectOrder": [
         {

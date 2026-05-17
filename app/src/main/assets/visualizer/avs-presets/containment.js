@@ -2,7 +2,7 @@
 // This file contains structured AVS preset data, not executable EEL code.
 window.braviaAvsPresetDefinitions = window.braviaAvsPresetDefinitions || {};
 window.braviaAvsPresetDefinitions["containment"] = {
-    "schemaVersion": 2,
+    "schemaVersion": 3,
     "id": "containment",
     "displayName": "UnConeD Containment",
     "source": {
@@ -10,7 +10,12 @@ window.braviaAvsPresetDefinitions["containment"] = {
         "fileName": "UnConeD - Containment.avs"
     },
     "root": {
-        "mode": 0
+        "modeRaw": 0,
+        "clearFrameBuffer": false,
+        "enabled": true,
+        "blendInMode": 0,
+        "blendOutMode": 1,
+        "extendedDataSize": 0
     },
     "effectOrder": [
         {
@@ -137,6 +142,23 @@ window.braviaAvsPresetDefinitions["containment"] = {
             "sourceOffset": 798,
             "configLength": 885,
             "opaque": false,
+            "settings": {
+                "modeRaw": 603979776,
+                "clearFrameBuffer": false,
+                "enabled": true,
+                "blendInMode": 0,
+                "blendOutMode": 1,
+                "extendedDataSize": 36,
+                "nestedOffset": 37,
+                "inBlendValue": 128,
+                "outBlendValue": 128,
+                "bufferIn": 0,
+                "bufferOut": 0,
+                "inInvert": 0,
+                "outInvert": 0,
+                "beatRender": 0,
+                "beatRenderFrames": 1
+            },
             "nestedOffset": 37,
             "effects": [
                 {
@@ -410,6 +432,23 @@ window.braviaAvsPresetDefinitions["containment"] = {
             "sourceOffset": 2598,
             "configLength": 881,
             "opaque": false,
+            "settings": {
+                "modeRaw": 604307457,
+                "clearFrameBuffer": true,
+                "enabled": true,
+                "blendInMode": 0,
+                "blendOutMode": 4,
+                "extendedDataSize": 36,
+                "nestedOffset": 37,
+                "inBlendValue": 128,
+                "outBlendValue": 128,
+                "bufferIn": 0,
+                "bufferOut": 0,
+                "inInvert": 0,
+                "outInvert": 0,
+                "beatRender": 0,
+                "beatRenderFrames": 1
+            },
             "nestedOffset": 37,
             "effects": [
                 {

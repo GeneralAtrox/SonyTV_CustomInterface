@@ -244,6 +244,69 @@ function decodeFastBrightness(config) {
     };
 }
 
+function decodeEffectListMode(mode) {
+    return {
+        modeRaw: mode >>> 0,
+        clearFrameBuffer: (mode & 1) !== 0,
+        enabled: ((mode & 2) ^ 2) !== 0,
+        blendInMode: (mode >>> 8) & 31,
+        blendOutMode: (((mode >>> 16) & 31) ^ 1),
+        extendedDataSize: (mode >>> 24) & 0xff
+    };
+}
+
+function decodeEffectList(config, nestedOffset) {
+    let pos = 0;
+    let mode = 0;
+    if (pos < config.length) {
+        mode = config[pos++];
+    }
+    if (mode & 0x80) {
+        mode = ((mode & ~0x80) | readUInt32At(config, pos)) >>> 0;
+        pos += 4;
+    }
+
+    const settings = decodeEffectListMode(mode);
+    settings.nestedOffset = nestedOffset;
+
+    const extendedEnd = Math.min(config.length, settings.extendedDataSize + 5);
+    if (extendedEnd > 5) {
+        if (pos + 4 <= extendedEnd) {
+            settings.inBlendValue = readInt32At(config, pos);
+            pos += 4;
+        }
+        if (pos + 4 <= extendedEnd) {
+            settings.outBlendValue = readInt32At(config, pos);
+            pos += 4;
+        }
+        if (pos + 4 <= extendedEnd) {
+            settings.bufferIn = readInt32At(config, pos);
+            pos += 4;
+        }
+        if (pos + 4 <= extendedEnd) {
+            settings.bufferOut = readInt32At(config, pos);
+            pos += 4;
+        }
+        if (pos + 4 <= extendedEnd) {
+            settings.inInvert = readInt32At(config, pos);
+            pos += 4;
+        }
+        if (pos + 4 <= extendedEnd) {
+            settings.outInvert = readInt32At(config, pos);
+            pos += 4;
+        }
+        if (pos < extendedEnd - 4 && pos + 4 <= extendedEnd) {
+            settings.beatRender = readInt32At(config, pos);
+            pos += 4;
+        }
+        if (pos < extendedEnd - 4 && pos + 4 <= extendedEnd) {
+            settings.beatRenderFrames = readInt32At(config, pos);
+        }
+    }
+
+    return settings;
+}
+
 function decodeIntegerConfig(config, names) {
     const values = {};
     for (let index = 0; index < names.length; index++) {
@@ -529,6 +592,7 @@ function parseEffectChunks(buffer, startOffset, depth) {
 
         if (type === "effectList" && depth < 8) {
             const nestedOffset = findNestedEffectOffset(config);
+            effect.settings = decodeEffectList(config, nestedOffset);
             if (nestedOffset >= 0) {
                 const parsed = parseEffectChunks(config, nestedOffset, depth + 1);
                 effect.nestedOffset = nestedOffset;
@@ -536,7 +600,6 @@ function parseEffectChunks(buffer, startOffset, depth) {
                 warnings.push(...parsed.warnings.map((warning) => `nested:${warning}`));
             } else {
                 effect.opaque = true;
-                effect.settings = decodeEffectSettings(effectId, config);
                 warnings.push(`Could not locate nested effects in Effect List at offset ${sourceOffset}`);
             }
         } else {
@@ -593,16 +656,14 @@ function parsePreset(inputPath, presetId) {
     const firstSuperScope = flattened.find((effect) => effect.type === "superScope");
 
     const preset = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         id: presetId || idFromFile(inputPath),
         displayName: displayNameFromFile(inputPath),
         source: {
             format: "Nullsoft AVS Preset 0.2",
             fileName: path.basename(inputPath)
         },
-        root: {
-            mode: rootMode
-        },
+        root: decodeEffectListMode(rootMode),
         effectOrder: flattened.map((effect) => ({
             type: effect.type,
             sourceEffectId: effect.sourceEffectId,

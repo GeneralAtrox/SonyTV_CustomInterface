@@ -433,9 +433,11 @@
         + "in vec2 v_uv;\n"
         + "uniform sampler2D u_texture;\n"
         + "uniform float u_opacity;\n"
+        + "uniform float u_gain;\n"
         + "out vec4 outColor;\n"
         + "void main() {\n"
-        + "    outColor = texture(u_texture, v_uv) * vec4(1.0, 1.0, 1.0, u_opacity);\n"
+        + "    vec4 color = texture(u_texture, v_uv);\n"
+        + "    outColor = vec4(color.rgb * u_gain, color.a * u_opacity);\n"
         + "}\n";
 
     var avsFeedbackFragmentSource = "#version 300 es\n"
@@ -698,8 +700,8 @@
 
     function defaultAvsLineMode() {
         return {
-            blendMode: "maximum",
-            lineWidth: 2
+            blendMode: "replace",
+            lineWidth: 1
         };
     }
 
@@ -773,6 +775,16 @@
         }
     }
 
+    function clearAvsRenderTarget(target) {
+        if (!target) {
+            return;
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+        gl.viewport(0, 0, target.width, target.height);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+
     function resetAvsFramebuffers() {
         if (!avsFramebufferState) {
             return;
@@ -825,7 +837,7 @@
         gl.vertexAttribPointer(lineLocations.color, 4, gl.FLOAT, false, 24, 8);
     }
 
-    function copyAvsTexture(texture, target, opacity) {
+    function copyAvsTexture(texture, target, opacity, gain) {
         if (!texture || !avsCopyProgram) {
             return;
         }
@@ -839,12 +851,69 @@
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.uniform1i(avsCopyLocations.texture, 0);
         gl.uniform1f(avsCopyLocations.opacity, opacity == null ? 1 : opacity);
+        gl.uniform1f(avsCopyLocations.gain, gain == null ? 1 : gain);
         gl.disable(gl.BLEND);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
 
     function copyAvsTextureToScreen(texture) {
         copyAvsTexture(texture, null, 1);
+    }
+
+    function blendAvsTextureToTarget(texture, target, blendMode, blendValue) {
+        if (!texture || !target || !avsCopyProgram || blendMode === 0) {
+            return false;
+        }
+        if (blendMode === 1) {
+            copyAvsTexture(texture, target, 1);
+            return true;
+        }
+        if (!(blendMode === 2 || blendMode === 3 || blendMode === 4 || blendMode === 5
+                || blendMode === 6 || blendMode === 7 || blendMode === 8 || blendMode === 10
+                || blendMode === 11 || blendMode === 13)) {
+            return false;
+        }
+
+        var opacity = blendMode === 10
+                ? clamp((blendValue == null ? 128 : blendValue) / 255, 0, 1)
+                : 1;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+        gl.viewport(0, 0, target.width, target.height);
+        gl.useProgram(avsCopyProgram);
+        bindAvsQuad(avsCopyLocations.position);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.uniform1i(avsCopyLocations.texture, 0);
+        gl.uniform1f(avsCopyLocations.opacity, opacity);
+        gl.uniform1f(avsCopyLocations.gain, 1);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        if (blendMode === 2 || blendMode === 7 || blendMode === 8) {
+            gl.uniform1f(avsCopyLocations.opacity, 0.5);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        } else if (blendMode === 3) {
+            gl.blendEquation(gl.MAX);
+            gl.blendFunc(gl.ONE, gl.ONE);
+        } else if (blendMode === 4) {
+            gl.blendFunc(gl.ONE, gl.ONE);
+        } else if (blendMode === 5) {
+            gl.blendEquation(gl.FUNC_REVERSE_SUBTRACT);
+            gl.blendFunc(gl.ONE, gl.ONE);
+        } else if (blendMode === 6) {
+            gl.blendEquation(gl.FUNC_SUBTRACT);
+            gl.blendFunc(gl.ONE, gl.ONE);
+        } else if (blendMode === 10) {
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        } else if (blendMode === 11) {
+            gl.blendFunc(gl.DST_COLOR, gl.ZERO);
+        } else if (blendMode === 13 && gl.MIN) {
+            gl.blendEquation(gl.MIN);
+            gl.blendFunc(gl.ONE, gl.ONE);
+        }
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.disable(gl.BLEND);
+        return true;
     }
 
     function swapAvsFramebuffers() {
@@ -936,11 +1005,35 @@
     }
 
     function releaseAvsRuntimeFramebuffers(runtime) {
-        if (!runtime || !runtime.renderers) {
+        if (!runtime) {
             return;
         }
-        for (var index = 0; index < runtime.renderers.length; index++) {
-            destroyAvsDelayHistory(runtime.renderers[index]);
+        if (runtime.renderers) {
+            for (var index = 0; index < runtime.renderers.length; index++) {
+                destroyAvsDelayHistory(runtime.renderers[index]);
+            }
+        }
+        if (runtime.nodes) {
+            for (var nodeIndex = 0; nodeIndex < runtime.nodes.length; nodeIndex++) {
+                releaseAvsRuntimeNodeFramebuffers(runtime.nodes[nodeIndex]);
+            }
+        }
+    }
+
+    function releaseAvsRuntimeNodeFramebuffers(node) {
+        if (!node) {
+            return;
+        }
+        if (node.kind === "effectList") {
+            destroyAvsRenderTarget(node.front);
+            destroyAvsRenderTarget(node.scratch);
+            node.front = null;
+            node.scratch = null;
+            if (node.children) {
+                for (var index = 0; index < node.children.length; index++) {
+                    releaseAvsRuntimeNodeFramebuffers(node.children[index]);
+                }
+            }
         }
     }
 
@@ -1029,97 +1122,125 @@
         return avsPresetDefinitions[preset.avsPresetId] || null;
     }
 
-    function compileAvsStackRuntime(definition) {
-        if (!definition || !definition.effects || !avsEel || typeof avsEel.compileSuite !== "function") {
-            return null;
-        }
+    function addAvsRuntimeRenderer(runtime, nodes, renderer) {
+        runtime.renderers.push(renderer);
+        nodes.push(renderer);
+    }
 
-        var flattened = flattenAvsRuntimeEffects(definition.effects, []);
-        var lineMode = cloneAvsLineMode(definition.lineMode);
-        var runtime = {
-            id: definition.id,
-            displayName: definition.displayName,
-            fadeAlpha: definition.fastBrightness && definition.fastBrightness.operation === "halve" ? 0.5 : 0.10,
-            renderers: []
-        };
-        var pendingTexer = null;
-
-        for (var index = 0; index < flattened.length; index++) {
-            var effect = flattened[index];
-            if (effect.type === "lineMode") {
-                lineMode = cloneAvsLineMode(effect.settings);
-            } else if (effect.type === "fastBrightness") {
-                runtime.fadeAlpha = effect.settings && effect.settings.operation === "halve" ? 0.5 : runtime.fadeAlpha;
+    function compileAvsEffectNodes(effects, runtime, context) {
+        var nodes = [];
+        for (var index = 0; index < effects.length; index++) {
+            var effect = effects[index];
+            if (effect.type === "effectList") {
+                var childContext = {
+                    lineMode: defaultAvsLineMode(),
+                    pendingTexer: null
+                };
+                nodes.push({
+                    kind: "effectList",
+                    settings: effect.settings || {},
+                    children: compileAvsEffectNodes(effect.effects || [], runtime, childContext),
+                    front: null,
+                    scratch: null,
+                    beatFramesRemaining: 0
+                });
+            } else if (effect.type === "lineMode") {
+                context.lineMode = cloneAvsLineMode(effect.settings);
             } else if (effect.type === "texer" || effect.type === "texer2") {
-                pendingTexer = effect.settings || {};
+                context.pendingTexer = effect.settings || {};
+            } else if (effect.type === "fastBrightness") {
+                addAvsRuntimeRenderer(runtime, nodes, {
+                    kind: "fastBrightness",
+                    settings: effect.settings || {}
+                });
             } else if (effect.type === "bufferBlit") {
-                runtime.renderers.push({
+                addAvsRuntimeRenderer(runtime, nodes, {
                     kind: "bufferBlit",
                     settings: effect.settings || {}
                 });
             } else if (effect.type === "clearScreen") {
-                runtime.renderers.push({
+                addAvsRuntimeRenderer(runtime, nodes, {
                     kind: "clearScreen",
                     settings: effect.settings || {},
                     hasRendered: false
                 });
             } else if (effect.type === "videoDelay") {
-                runtime.renderers.push({
+                addAvsRuntimeRenderer(runtime, nodes, {
                     kind: "videoDelay",
                     settings: effect.settings || {},
                     phase: 0
                 });
             } else if (effect.type === "bump") {
-                runtime.renderers.push({
+                addAvsRuntimeRenderer(runtime, nodes, {
                     kind: "bump",
                     settings: effect.settings || {},
                     phase: 0,
                     beatDepth: 0
                 });
             } else if (effect.type === "scatter") {
-                runtime.renderers.push({
+                addAvsRuntimeRenderer(runtime, nodes, {
                     kind: "scatter",
                     settings: effect.settings || {},
                     seed: 0.37
                 });
             } else if (effect.type === "colorFade") {
-                runtime.renderers.push({
+                addAvsRuntimeRenderer(runtime, nodes, {
                     kind: "colorFade",
                     settings: effect.settings || {}
                 });
             } else if (effect.type === "simple") {
-                runtime.renderers.push({
+                addAvsRuntimeRenderer(runtime, nodes, {
                     kind: "simple",
                     settings: effect.settings || {},
                     sampleCount: 160,
-                    lineMode: cloneAvsLineMode(lineMode),
+                    lineMode: cloneAvsLineMode(context.lineMode),
                     colors: effect.settings && effect.settings.colors ? effect.settings.colors : [createAvsColor(0xffffff)]
                 });
             } else if (effect.type === "oscilloscope") {
-                runtime.renderers.push({
+                addAvsRuntimeRenderer(runtime, nodes, {
                     kind: "oscilloscope",
                     sampleCount: 160,
-                    lineMode: cloneAvsLineMode(lineMode),
+                    lineMode: cloneAvsLineMode(context.lineMode),
                     colors: [createAvsColor(0x66f7ff)],
                     texer: null
                 });
             } else if (effect.type === "dotFountain" && effect.settings && effect.settings.eel) {
-                runtime.renderers.push(createAvsEelRenderer("dotFountain", effect.settings, 180, "points",
-                        lineMode, [createAvsColor(effect.settings.colorRaw)], pendingTexer));
-                pendingTexer = null;
+                addAvsRuntimeRenderer(runtime, nodes, createAvsEelRenderer("dotFountain", effect.settings,
+                        180, "points", context.lineMode, [createAvsColor(effect.settings.colorRaw)],
+                        context.pendingTexer));
+                context.pendingTexer = null;
             } else if (effect.type === "renderState" && effect.settings && effect.settings.eel) {
-                runtime.renderers.push(createAvsEelRenderer("renderState", effect.settings, 0, "points",
-                        lineMode, [createAvsColor(0x8af6ff)], pendingTexer));
-                pendingTexer = null;
+                addAvsRuntimeRenderer(runtime, nodes, createAvsEelRenderer("renderState", effect.settings,
+                        0, "points", context.lineMode, [createAvsColor(0x8af6ff)], context.pendingTexer));
+                context.pendingTexer = null;
             } else if (effect.type === "superScope" && effect.settings && effect.settings.eel) {
                 var settings = effect.settings;
-                runtime.renderers.push(createAvsEelRenderer("superScope", settings,
+                addAvsRuntimeRenderer(runtime, nodes, createAvsEelRenderer("superScope", settings,
                         normalizeAvsSampleCount(settings.sampleCount, 64),
-                        settings.drawMode || "lines", lineMode, settings.colors || [], pendingTexer));
-                pendingTexer = null;
+                        settings.drawMode || "lines", context.lineMode, settings.colors || [], context.pendingTexer));
+                context.pendingTexer = null;
             }
         }
+        return nodes;
+    }
 
+    function compileAvsStackRuntime(definition) {
+        if (!definition || !definition.effects || !avsEel || typeof avsEel.compileSuite !== "function") {
+            return null;
+        }
+
+        var runtime = {
+            id: definition.id,
+            displayName: definition.displayName,
+            fadeAlpha: 0,
+            renderers: [],
+            nodes: []
+        };
+        var context = {
+            lineMode: defaultAvsLineMode(),
+            pendingTexer: null
+        };
+        runtime.nodes = compileAvsEffectNodes(definition.effects, runtime, context);
         return runtime.renderers.length > 0 ? runtime : null;
     }
 
@@ -1236,6 +1357,10 @@
     }
 
     function renderAvsStackRenderer(renderer, isBeat) {
+        if (renderer.kind === "fastBrightness") {
+            renderAvsFastBrightness(renderer);
+            return;
+        }
         if (renderer.kind === "bufferBlit") {
             renderAvsBufferBlit(renderer);
             return;
@@ -1349,6 +1474,21 @@
         gl.blendEquation(gl.FUNC_ADD);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
+    function renderAvsFastBrightness(renderer) {
+        var state = ensureAvsFramebuffers();
+        if (!state) {
+            return;
+        }
+        var settings = renderer.settings || {};
+        var gain = settings.direction === 0 ? 2 : (settings.direction === 1 ? 0.5 : 1);
+        if (gain === 1) {
+            return;
+        }
+        copyAvsTexture(state.front.texture, state.scratch, 1, gain);
+        swapAvsFramebuffers();
+        bindAvsLineTarget(avsFramebufferState.front);
     }
 
     function renderAvsBufferBlit(renderer) {
@@ -1664,6 +1804,109 @@
         drawAvsVertices(avsStackVertices, vertexCount, renderer.lineMode.blendMode);
     }
 
+    function ensureAvsEffectListTargets(node) {
+        var state = ensureAvsFramebuffers();
+        if (!state) {
+            return false;
+        }
+        if (node.front && node.scratch && node.front.width === state.width && node.front.height === state.height
+                && node.scratch.width === state.width && node.scratch.height === state.height) {
+            return true;
+        }
+        destroyAvsRenderTarget(node.front);
+        destroyAvsRenderTarget(node.scratch);
+        node.front = createAvsRenderTarget(state.width, state.height);
+        node.scratch = createAvsRenderTarget(state.width, state.height);
+        if (!node.front || !node.scratch) {
+            destroyAvsRenderTarget(node.front);
+            destroyAvsRenderTarget(node.scratch);
+            node.front = null;
+            node.scratch = null;
+            return false;
+        }
+        clearAvsRenderTarget(node.front);
+        clearAvsRenderTarget(node.scratch);
+        bindAvsLineTarget(state.front);
+        return true;
+    }
+
+    function avsEffectListEnabled(node, isBeat) {
+        var settings = node.settings || {};
+        if (isBeat && settings.beatRender) {
+            node.beatFramesRemaining = Math.max(1, Math.round(settings.beatRenderFrames || 1));
+        }
+        var enabled = settings.enabled !== false;
+        if (!enabled && node.beatFramesRemaining <= 0) {
+            return false;
+        }
+        if (node.beatFramesRemaining > 0) {
+            node.beatFramesRemaining--;
+        }
+        return true;
+    }
+
+    function renderAvsRuntimeNodes(nodes, isBeat) {
+        for (var index = 0; index < nodes.length && !avsStackRuntimeFailed; index++) {
+            renderAvsRuntimeNode(nodes[index], isBeat);
+        }
+    }
+
+    function renderAvsRuntimeNode(node, isBeat) {
+        if (node.kind === "effectList") {
+            renderAvsEffectListNode(node, isBeat);
+            return;
+        }
+        renderAvsStackRenderer(node, isBeat);
+    }
+
+    function renderAvsEffectListNode(node, isBeat) {
+        var settings = node.settings || {};
+        var children = node.children || [];
+        if (children.length === 0 || !avsEffectListEnabled(node, isBeat)) {
+            return;
+        }
+
+        var state = ensureAvsFramebuffers();
+        if (!state) {
+            return;
+        }
+        if (settings.blendInMode === 1 && settings.blendOutMode === 1) {
+            if (settings.clearFrameBuffer) {
+                clearAvsRenderTarget(state.front);
+                bindAvsLineTarget(state.front);
+            }
+            renderAvsRuntimeNodes(children, isBeat);
+            return;
+        }
+
+        if (!ensureAvsEffectListTargets(node)) {
+            renderAvsRuntimeNodes(children, isBeat);
+            return;
+        }
+
+        var parentFront = state.front;
+        var parentScratch = state.scratch;
+        if (settings.clearFrameBuffer) {
+            clearAvsRenderTarget(node.front);
+            clearAvsRenderTarget(node.scratch);
+        }
+        blendAvsTextureToTarget(parentFront.texture, node.front, settings.blendInMode || 0,
+                settings.inBlendValue);
+
+        state.front = node.front;
+        state.scratch = node.scratch;
+        bindAvsLineTarget(state.front);
+        renderAvsRuntimeNodes(children, isBeat);
+        node.front = state.front;
+        node.scratch = state.scratch;
+
+        state.front = parentFront;
+        state.scratch = parentScratch;
+        blendAvsTextureToTarget(node.front.texture, parentFront, settings.blendOutMode || 0,
+                settings.outBlendValue);
+        bindAvsLineTarget(state.front);
+    }
+
     function renderAvsPreset(now) {
         var runtime = getAvsStackRuntime();
         if (!runtime || !lineProgram || !lineBuffer) {
@@ -1686,7 +1929,7 @@
             gl.clearColor(0, 0, 0, 1);
             gl.clear(gl.COLOR_BUFFER_BIT);
             avsStackFrameStarted = true;
-        } else {
+        } else if (runtime.fadeAlpha > 0) {
             setAvsFadeAlpha(runtime.fadeAlpha);
             gl.bufferData(gl.ARRAY_BUFFER, avsFadeVertices, gl.STATIC_DRAW);
             gl.enable(gl.BLEND);
@@ -1696,9 +1939,7 @@
         }
 
         var isBeat = detectAvsStackBeat(now);
-        for (var index = 0; index < runtime.renderers.length && !avsStackRuntimeFailed; index++) {
-            renderAvsStackRenderer(runtime.renderers[index], isBeat);
-        }
+        renderAvsRuntimeNodes(runtime.nodes, isBeat);
         gl.blendEquation(gl.FUNC_ADD);
         gl.disable(gl.BLEND);
         copyAvsTextureToScreen(avsFramebufferState.front.texture);
@@ -3001,6 +3242,7 @@
         avsCopyLocations.position = gl.getAttribLocation(avsCopyProgram, "a_position");
         avsCopyLocations.texture = gl.getUniformLocation(avsCopyProgram, "u_texture");
         avsCopyLocations.opacity = gl.getUniformLocation(avsCopyProgram, "u_opacity");
+        avsCopyLocations.gain = gl.getUniformLocation(avsCopyProgram, "u_gain");
         avsFeedbackLocations.position = gl.getAttribLocation(avsFeedbackProgram, "a_position");
         avsFeedbackLocations.texture = gl.getUniformLocation(avsFeedbackProgram, "u_texture");
         avsFeedbackLocations.resolution = gl.getUniformLocation(avsFeedbackProgram, "u_resolution");

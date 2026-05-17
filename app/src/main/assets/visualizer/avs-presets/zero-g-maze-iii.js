@@ -2,7 +2,7 @@
 // This file contains structured AVS preset data, not executable EEL code.
 window.braviaAvsPresetDefinitions = window.braviaAvsPresetDefinitions || {};
 window.braviaAvsPresetDefinitions["zeroGMazeIII"] = {
-    "schemaVersion": 2,
+    "schemaVersion": 3,
     "id": "zeroGMazeIII",
     "displayName": "UnConeD Zero-G Maze III",
     "source": {
@@ -10,7 +10,12 @@ window.braviaAvsPresetDefinitions["zeroGMazeIII"] = {
         "fileName": "UnConeD -Zero-G Maze III.avs"
     },
     "root": {
-        "mode": 0
+        "modeRaw": 0,
+        "clearFrameBuffer": false,
+        "enabled": true,
+        "blendInMode": 0,
+        "blendOutMode": 1,
+        "extendedDataSize": 0
     },
     "effectOrder": [
         {
@@ -117,6 +122,23 @@ window.braviaAvsPresetDefinitions["zeroGMazeIII"] = {
             "sourceOffset": 1598,
             "configLength": 885,
             "opaque": false,
+            "settings": {
+                "modeRaw": 604045312,
+                "clearFrameBuffer": false,
+                "enabled": true,
+                "blendInMode": 0,
+                "blendOutMode": 0,
+                "extendedDataSize": 36,
+                "nestedOffset": 37,
+                "inBlendValue": 128,
+                "outBlendValue": 128,
+                "bufferIn": 0,
+                "bufferOut": 0,
+                "inInvert": 0,
+                "outInvert": 0,
+                "beatRender": 0,
+                "beatRenderFrames": 1
+            },
             "nestedOffset": 37,
             "effects": [
                 {
@@ -244,6 +266,23 @@ window.braviaAvsPresetDefinitions["zeroGMazeIII"] = {
                     "sourceOffset": 658,
                     "configLength": 199,
                     "opaque": false,
+                    "settings": {
+                        "modeRaw": 603980034,
+                        "clearFrameBuffer": false,
+                        "enabled": false,
+                        "blendInMode": 1,
+                        "blendOutMode": 1,
+                        "extendedDataSize": 36,
+                        "nestedOffset": 37,
+                        "inBlendValue": 128,
+                        "outBlendValue": 128,
+                        "bufferIn": 0,
+                        "bufferOut": 0,
+                        "inInvert": 0,
+                        "outInvert": 0,
+                        "beatRender": 1,
+                        "beatRenderFrames": 1
+                    },
                     "nestedOffset": 37,
                     "effects": [
                         {
@@ -299,6 +338,23 @@ window.braviaAvsPresetDefinitions["zeroGMazeIII"] = {
                             "sourceOffset": 106,
                             "configLength": 57,
                             "opaque": false,
+                            "settings": {
+                                "modeRaw": 604635136,
+                                "clearFrameBuffer": false,
+                                "enabled": true,
+                                "blendInMode": 0,
+                                "blendOutMode": 11,
+                                "extendedDataSize": 36,
+                                "nestedOffset": 37,
+                                "inBlendValue": 128,
+                                "outBlendValue": 128,
+                                "bufferIn": 0,
+                                "bufferOut": 0,
+                                "inInvert": 0,
+                                "outInvert": 0,
+                                "beatRender": 0,
+                                "beatRenderFrames": 1
+                            },
                             "nestedOffset": 37,
                             "effects": [
                                 {
@@ -426,6 +482,23 @@ window.braviaAvsPresetDefinitions["zeroGMazeIII"] = {
             "sourceOffset": 2702,
             "configLength": 57,
             "opaque": false,
+            "settings": {
+                "modeRaw": 604045570,
+                "clearFrameBuffer": false,
+                "enabled": false,
+                "blendInMode": 1,
+                "blendOutMode": 0,
+                "extendedDataSize": 36,
+                "nestedOffset": 41,
+                "inBlendValue": 128,
+                "outBlendValue": 128,
+                "bufferIn": 0,
+                "bufferOut": 0,
+                "inInvert": 0,
+                "outInvert": 0,
+                "beatRender": 1,
+                "beatRenderFrames": 1
+            },
             "nestedOffset": 41,
             "effects": [
                 {
