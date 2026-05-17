@@ -5,6 +5,8 @@
     var coasterContext = coasterCanvas ? coasterCanvas.getContext("2d") : null;
     var presetOverlay = document.getElementById("presetOverlay");
     var presetName = document.getElementById("presetName");
+    var avsPresetDefinitions = window.braviaAvsPresetDefinitions || {};
+    var neonCoasterDefinition = avsPresetDefinitions.neonCoaster || null;
     var gl = null;
     var program = null;
     var quadBuffer = null;
@@ -37,15 +39,29 @@
     };
     var waveformSamples = new Float32Array(audioSize);
     var avsNeonState = null;
-    var avsNeonLineWidthPx = 3;
-    var avsNeonVertices = new Float32Array(480 * 6 * 6);
+    var avsNeonSampleCount = neonCoasterDefinition && neonCoasterDefinition.superScope
+            && neonCoasterDefinition.superScope.sampleCount
+            ? neonCoasterDefinition.superScope.sampleCount
+            : 480;
+    var avsNeonLineWidthPx = neonCoasterDefinition && neonCoasterDefinition.lineMode
+            && neonCoasterDefinition.lineMode.lineWidth
+            ? neonCoasterDefinition.lineMode.lineWidth
+            : 3;
+    var avsFastBrightnessFadeAlpha = neonCoasterDefinition && neonCoasterDefinition.fastBrightness
+            && neonCoasterDefinition.fastBrightness.operation === "halve"
+            ? 0.50
+            : 0;
+    var avsNeonBlendMode = neonCoasterDefinition && neonCoasterDefinition.lineMode
+            ? neonCoasterDefinition.lineMode.blendMode
+            : "maximum";
+    var avsNeonVertices = new Float32Array(avsNeonSampleCount * 6 * 6);
     var avsFadeVertices = new Float32Array([
-        -1, -1, 0, 0, 0, 0.50,
-        1, -1, 0, 0, 0, 0.50,
-        -1, 1, 0, 0, 0, 0.50,
-        -1, 1, 0, 0, 0, 0.50,
-        1, -1, 0, 0, 0, 0.50,
-        1, 1, 0, 0, 0, 0.50
+        -1, -1, 0, 0, 0, avsFastBrightnessFadeAlpha,
+        1, -1, 0, 0, 0, avsFastBrightnessFadeAlpha,
+        -1, 1, 0, 0, 0, avsFastBrightnessFadeAlpha,
+        -1, 1, 0, 0, 0, avsFastBrightnessFadeAlpha,
+        1, -1, 0, 0, 0, avsFastBrightnessFadeAlpha,
+        1, 1, 0, 0, 0, avsFastBrightnessFadeAlpha
     ]);
     var avsNeonFrameStarted = false;
 
@@ -79,8 +95,9 @@
             colorC: [0.18, 0.74, 0.70]
         },
         {
-            name: "UnConeD Neon Coaster",
+            name: neonCoasterDefinition ? neonCoasterDefinition.displayName : "UnConeD Neon Coaster",
             mode: "coaster",
+            avsPresetId: "neonCoaster",
             shape: 0.25,
             turn: 0.36,
             twist: 0.18,
@@ -513,7 +530,7 @@
 
     function resetAvsNeonState() {
         avsNeonState = {
-            n: 480,
+            n: avsNeonSampleCount,
             tpi: Math.acos(-1),
             t: 0,
             ox: 0,
@@ -949,29 +966,57 @@
         avsNeonVertices[offset + 5] = a;
     }
 
+    function avsPixelToClipX(x) {
+        return (x * 2 / Math.max(1, canvas.width)) - 1;
+    }
+
+    function avsPixelToClipY(y) {
+        return 1 - (y * 2 / Math.max(1, canvas.height));
+    }
+
+    function addAvsLineQuad(vertexCount, x1, y1, x2, y2, x3, y3, x4, y4, color) {
+        var offset = vertexCount * 6;
+        writeAvsNeonVertex(offset, avsPixelToClipX(x1), avsPixelToClipY(y1), color.r, color.g, color.b, color.a);
+        writeAvsNeonVertex(offset + 6, avsPixelToClipX(x2), avsPixelToClipY(y2), color.r, color.g, color.b, color.a);
+        writeAvsNeonVertex(offset + 12, avsPixelToClipX(x3), avsPixelToClipY(y3), color.r, color.g, color.b, color.a);
+        writeAvsNeonVertex(offset + 18, avsPixelToClipX(x3), avsPixelToClipY(y3), color.r, color.g, color.b, color.a);
+        writeAvsNeonVertex(offset + 24, avsPixelToClipX(x2), avsPixelToClipY(y2), color.r, color.g, color.b, color.a);
+        writeAvsNeonVertex(offset + 30, avsPixelToClipX(x4), avsPixelToClipY(y4), color.r, color.g, color.b, color.a);
+        return vertexCount + 6;
+    }
+
     function addAvsNeonSegment(vertexCount, start, end) {
-        var x1 = start.x;
-        var y1 = -start.y;
-        var x2 = end.x;
-        var y2 = -end.y;
-        var dxPx = (x2 - x1) * canvas.width * 0.5;
-        var dyPx = (y2 - y1) * canvas.height * 0.5;
-        var lengthPx = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
-        if (lengthPx < 0.001) {
+        var x1 = Math.trunc((start.x + 1) * canvas.width * 0.5);
+        var y1 = Math.trunc((start.y + 1) * canvas.height * 0.5);
+        var x2 = Math.trunc((end.x + 1) * canvas.width * 0.5);
+        var y2 = Math.trunc((end.y + 1) * canvas.height * 0.5);
+        var dx = Math.abs(x2 - x1);
+        var dy = Math.abs(y2 - y1);
+        if (!dx && !dy) {
             return vertexCount;
         }
 
-        var halfWidthPx = avsNeonLineWidthPx * 0.5;
-        var normalX = (-dyPx / lengthPx) * halfWidthPx * 2 / canvas.width;
-        var normalY = (dxPx / lengthPx) * halfWidthPx * 2 / canvas.height;
-        var offset = vertexCount * 6;
-        writeAvsNeonVertex(offset, x1 + normalX, y1 + normalY, start.r, start.g, start.b, start.a);
-        writeAvsNeonVertex(offset + 6, x2 + normalX, y2 + normalY, end.r, end.g, end.b, end.a);
-        writeAvsNeonVertex(offset + 12, x1 - normalX, y1 - normalY, start.r, start.g, start.b, start.a);
-        writeAvsNeonVertex(offset + 18, x1 - normalX, y1 - normalY, start.r, start.g, start.b, start.a);
-        writeAvsNeonVertex(offset + 24, x2 + normalX, y2 + normalY, end.r, end.g, end.b, end.a);
-        writeAvsNeonVertex(offset + 30, x2 - normalX, y2 - normalY, end.r, end.g, end.b, end.a);
-        return vertexCount + 6;
+        var lw2 = Math.floor(avsNeonLineWidthPx / 2);
+        var color = {
+            r: end.r,
+            g: end.g,
+            b: end.b,
+            a: end.a
+        };
+        if (!dx) {
+            return addAvsLineQuad(vertexCount, x1 - lw2, y1, x1 - lw2 + avsNeonLineWidthPx, y1,
+                    x2 - lw2, y2, x2 - lw2 + avsNeonLineWidthPx, y2, color);
+        }
+        if (!dy) {
+            return addAvsLineQuad(vertexCount, x1, y1 - lw2, x2, y2 - lw2,
+                    x1, y1 - lw2 + avsNeonLineWidthPx, x2, y2 - lw2 + avsNeonLineWidthPx, color);
+        }
+        if (dy <= dx) {
+            return addAvsLineQuad(vertexCount, x1, y1 - lw2, x2, y2 - lw2,
+                    x1, y1 - lw2 + avsNeonLineWidthPx, x2, y2 - lw2 + avsNeonLineWidthPx, color);
+        }
+        return addAvsLineQuad(vertexCount, x1 - lw2, y1, x2 - lw2, y2,
+                x1 - lw2 + avsNeonLineWidthPx, y1, x2 - lw2 + avsNeonLineWidthPx, y2, color);
     }
 
     function renderNeonCoaster(now) {
@@ -1031,7 +1076,7 @@
 
         gl.bufferData(gl.ARRAY_BUFFER, avsNeonVertices, gl.DYNAMIC_DRAW);
         gl.enable(gl.BLEND);
-        gl.blendEquation(gl.MAX);
+        gl.blendEquation(avsNeonBlendMode === "maximum" ? gl.MAX : gl.FUNC_ADD);
         gl.blendFunc(gl.ONE, gl.ONE);
         gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
         gl.blendEquation(gl.FUNC_ADD);
