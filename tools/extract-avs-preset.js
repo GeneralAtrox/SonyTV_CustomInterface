@@ -23,7 +23,7 @@ const EFFECT_NAMES = new Map([
     [12, "Scatter"],
     [13, "Dot Grid"],
     [14, "Stack"],
-    [15, "Dot Fountain"],
+    [15, "Trans / Movement"],
     [16, "Water Bump"],
     [17, "Buffer Save"],
     [18, "Buffer Save"],
@@ -65,7 +65,7 @@ const EFFECT_TYPES = new Map([
     [3, "oscilloscopeStar"],
     [6, "colorFade"],
     [12, "scatter"],
-    [15, "dotFountain"],
+    [15, "transformMovement"],
     [18, "bufferSave"],
     [20, "bump"],
     [21, "comment"],
@@ -331,23 +331,53 @@ function decodeBufferSave(config) {
     };
 }
 
-function decodeDotFountain(config) {
-    const colorRaw = readUInt32At(config, 0);
+function decodeTransformMovement(config) {
+    const effect = readInt32At(config, 0);
     const settings = {
-        colorRaw,
-        colorHex: colorToHex(colorRaw),
-        marker: config.length > 4 ? config[4] : 0
+        effect,
+        marker: config.length > 4 ? config[4] : 0,
+        eel: {},
+        blend: 0,
+        sourceMapped: 0,
+        rectCoords: 0,
+        subpixel: 0,
+        wrap: 0,
+        tailInts: []
     };
-    if (settings.marker === 1) {
-        const code = readSizedStringAt(config, 5);
-        settings.eel = {
-            point: stripRuntimeIrrelevantEel(code.value)
-        };
-        settings.tailInts = [];
-        for (let offset = code.nextOffset; offset + 4 <= config.length; offset += 4) {
-            settings.tailInts.push(config.readInt32LE(offset));
+    let offset = 4;
+    if (effect === 32767) {
+        if (config.slice(offset, offset + 6).toString("latin1") === "!rect ") {
+            settings.rectCoords = 1;
+            offset += 6;
+        }
+        settings.marker = config.length > offset ? config[offset] : 0;
+        if (settings.marker === 1) {
+            const code = readSizedStringAt(config, offset + 1);
+            settings.eel.point = stripRuntimeIrrelevantEel(code.value);
+            offset = code.nextOffset;
+        } else if (offset < config.length) {
+            const length = Math.min(256 - (settings.rectCoords ? 6 : 0), config.length - offset);
+            settings.eel.point = stripRuntimeIrrelevantEel(config.slice(offset, offset + length)
+                    .toString("latin1")
+                    .replace(/\0.*$/s, ""));
+            offset += length;
         }
     } else {
+        offset = 4;
+    }
+    const tail = [];
+    for (; offset + 4 <= config.length; offset += 4) {
+        tail.push(config.readInt32LE(offset));
+    }
+    settings.tailInts = tail;
+    settings.blend = tail.length > 0 ? tail[0] : 0;
+    settings.sourceMapped = tail.length > 1 ? tail[1] : 0;
+    if (tail.length > 2) {
+        settings.rectCoords = tail[2];
+    }
+    settings.subpixel = tail.length > 3 ? tail[3] : 0;
+    settings.wrap = tail.length > 4 ? tail[4] : 0;
+    if (!settings.eel.point) {
         settings.ints = previewInts(config);
     }
     return settings;
@@ -611,7 +641,7 @@ function decodeEffectSettings(effectId, config) {
         return decodeColorFade(config);
     }
     if (effectId === 15) {
-        return decodeDotFountain(config);
+        return decodeTransformMovement(config);
     }
     if (effectId === 18) {
         return decodeBufferSave(config);

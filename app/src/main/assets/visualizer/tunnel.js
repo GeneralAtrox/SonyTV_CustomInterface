@@ -1344,6 +1344,8 @@
             pi: Math.acos(-1),
             w: Math.max(1, canvas.width),
             h: Math.max(1, canvas.height),
+            sw: Math.max(1, canvas.width),
+            sh: Math.max(1, canvas.height),
             x: 0,
             y: 0,
             r: 0,
@@ -1364,7 +1366,7 @@
     function createAvsEelRenderer(kind, settings, sampleCount, drawMode, lineMode, colors, texer) {
         var suite = avsEel.compileSuite(settings.eel || {});
         var scope = suite.createScope(createAvsInitialState(sampleCount));
-        var slots = suite.slots(["n", "w", "h", "i", "x", "y", "r", "d", "b", "bi",
+        var slots = suite.slots(["n", "w", "h", "sw", "sh", "i", "x", "y", "r", "d", "b", "bi",
             "isbeat", "islbeat", "red", "green", "blue", "alpha"]);
         suite.init.run(scope, avsEelHost());
         sampleCount = normalizeAvsSampleCount(suite.getSlot(scope, slots.n), sampleCount);
@@ -1503,6 +1505,9 @@
                     colors: effect.settings && effect.settings.colors ? effect.settings.colors : [createAvsColor(0xffffff)],
                     rotation: 0
                 });
+            } else if (effect.type === "transformMovement" && effect.settings && effect.settings.eel) {
+                addAvsRuntimeRenderer(runtime, nodes, createAvsEelRenderer("transformMovement", effect.settings,
+                        0, "points", context.lineMode, [createAvsColor(0xffffff)], null));
             } else if (effect.type === "dotFountain" && effect.settings && effect.settings.eel) {
                 addAvsRuntimeRenderer(runtime, nodes, createAvsEelRenderer("dotFountain", effect.settings,
                         180, "points", context.lineMode, [createAvsColor(effect.settings.colorRaw)],
@@ -1744,6 +1749,10 @@
             renderAvsSimpleRenderer(renderer);
             return;
         }
+        if (renderer.kind === "transformMovement") {
+            renderAvsTransformMovementRenderer(renderer, isBeat);
+            return;
+        }
         if (renderer.kind === "dotFountain") {
             renderAvsDotFountainRenderer(renderer, isBeat);
             return;
@@ -1765,6 +1774,8 @@
         var slots = renderer.slots;
         suite.setSlot(scope, slots.w, canvas.width);
         suite.setSlot(scope, slots.h, Math.max(1, canvas.height));
+        suite.setSlot(scope, slots.sw, canvas.width);
+        suite.setSlot(scope, slots.sh, Math.max(1, canvas.height));
         suite.setSlot(scope, slots.b, isBeat ? 1 : 0);
         suite.setSlot(scope, slots.alpha, 0.5);
         if (!runAvsStackProgram(suite, suite.frame, scope)) {
@@ -2433,6 +2444,10 @@
 
     function drawAvsDynamicMovementMesh(sourceTarget, blendEnabled, vertexCount) {
         var state = avsFramebufferState;
+        if (!state || !sourceTarget || vertexCount <= 0) {
+            bindAvsLineTarget(state ? state.front : null);
+            return;
+        }
         gl.bindFramebuffer(gl.FRAMEBUFFER, state.scratch.framebuffer);
         gl.viewport(0, 0, state.scratch.width, state.scratch.height);
         gl.useProgram(avsWarpProgram);
@@ -2458,6 +2473,55 @@
         gl.activeTexture(gl.TEXTURE0);
         swapAvsFramebuffers();
         bindAvsLineTarget(avsFramebufferState.front);
+    }
+
+    function renderAvsTransformMovementRenderer(renderer, isBeat) {
+        var state = ensureAvsFramebuffers();
+        if (!state || !prepareAvsFrameProgram(renderer, isBeat)) {
+            return;
+        }
+        var settings = renderer.settings || {};
+        if (!settings.effect) {
+            bindAvsLineTarget(state.front);
+            return;
+        }
+
+        var xResolution = Math.max(16, Math.min(96, Math.round(state.width / 32)));
+        var yResolution = Math.max(9, Math.min(72, Math.round(state.height / 32)));
+        var columns = xResolution + 1;
+        var rows = yResolution + 1;
+        var pointCount = columns * rows;
+        var vertexCount = xResolution * yResolution * 6;
+        ensureAvsWarpCapacity(pointCount, vertexCount);
+
+        var movementOptions = {
+            rectCoords: settings.rectCoords !== 0 && settings.rectCoords !== false,
+            wrap: settings.wrap !== 0 && settings.wrap !== false,
+            subpixel: settings.subpixel !== 0 && settings.subpixel !== false
+        };
+
+        for (var row = 0; row < rows; row++) {
+            for (var column = 0; column < columns; column++) {
+                var mapIndex = (row * columns + column) * 3;
+                if (!writeAvsDynamicMovementMapPoint(renderer, movementOptions, column, row,
+                        columns, rows, isBeat, mapIndex)) {
+                    return;
+                }
+            }
+        }
+
+        var writtenVertices = 0;
+        for (var cellRow = 0; cellRow < yResolution; cellRow++) {
+            for (var cellColumn = 0; cellColumn < xResolution; cellColumn++) {
+                writtenVertices = appendAvsWarpVertex(writtenVertices, cellColumn, cellRow, columns, rows);
+                writtenVertices = appendAvsWarpVertex(writtenVertices, cellColumn + 1, cellRow, columns, rows);
+                writtenVertices = appendAvsWarpVertex(writtenVertices, cellColumn, cellRow + 1, columns, rows);
+                writtenVertices = appendAvsWarpVertex(writtenVertices, cellColumn, cellRow + 1, columns, rows);
+                writtenVertices = appendAvsWarpVertex(writtenVertices, cellColumn + 1, cellRow, columns, rows);
+                writtenVertices = appendAvsWarpVertex(writtenVertices, cellColumn + 1, cellRow + 1, columns, rows);
+            }
+        }
+        drawAvsDynamicMovementMesh(state.front, settings.blend !== 0, writtenVertices);
     }
 
     function renderAvsDynamicMovementRenderer(renderer, isBeat) {

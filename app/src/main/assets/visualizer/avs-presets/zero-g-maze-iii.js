@@ -54,7 +54,7 @@ window.braviaAvsPresetDefinitions["zeroGMazeIII"] = {
             "sourceOffset": 658
         },
         {
-            "type": "dotFountain",
+            "type": "transformMovement",
             "sourceEffectId": 15,
             "sourceOffset": 37
         },
@@ -89,7 +89,7 @@ window.braviaAvsPresetDefinitions["zeroGMazeIII"] = {
             "sourceOffset": 2491
         },
         {
-            "type": "dotFountain",
+            "type": "transformMovement",
             "sourceEffectId": 15,
             "sourceOffset": 2657
         },
@@ -295,19 +295,23 @@ window.braviaAvsPresetDefinitions["zeroGMazeIII"] = {
                     "nestedOffset": 37,
                     "effects": [
                         {
-                            "type": "dotFountain",
-                            "name": "Dot Fountain",
+                            "type": "transformMovement",
+                            "name": "Trans / Movement",
                             "sourceEffectId": 15,
                             "sourceOffset": 37,
                             "configLength": 33,
                             "opaque": false,
                             "settings": {
-                                "colorRaw": 32767,
-                                "colorHex": "#ff7f00",
+                                "effect": 32767,
                                 "marker": 1,
                                 "eel": {
                                     "point": "y=0"
                                 },
+                                "blend": 0,
+                                "sourceMapped": 0,
+                                "rectCoords": 0,
+                                "subpixel": 0,
+                                "wrap": 0,
                                 "tailInts": [
                                     0,
                                     0,
@@ -464,19 +468,23 @@ window.braviaAvsPresetDefinitions["zeroGMazeIII"] = {
             }
         },
         {
-            "type": "dotFountain",
-            "name": "Dot Fountain",
+            "type": "transformMovement",
+            "name": "Trans / Movement",
             "sourceEffectId": 15,
             "sourceOffset": 2657,
             "configLength": 37,
             "opaque": false,
             "settings": {
-                "colorRaw": 32767,
-                "colorHex": "#ff7f00",
+                "effect": 32767,
                 "marker": 1,
                 "eel": {
                     "point": "x=0;y=0"
                 },
+                "blend": 0,
+                "sourceMapped": 0,
+                "rectCoords": 1,
+                "subpixel": 0,
+                "wrap": 0,
                 "tailInts": [
                     0,
                     0,

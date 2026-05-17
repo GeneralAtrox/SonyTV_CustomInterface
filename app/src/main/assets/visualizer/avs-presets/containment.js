@@ -74,7 +74,7 @@ window.braviaAvsPresetDefinitions["containment"] = {
             "sourceOffset": 1691
         },
         {
-            "type": "dotFountain",
+            "type": "transformMovement",
             "sourceEffectId": 15,
             "sourceOffset": 1703
         },
@@ -398,19 +398,23 @@ window.braviaAvsPresetDefinitions["containment"] = {
             }
         },
         {
-            "type": "dotFountain",
-            "name": "Dot Fountain",
+            "type": "transformMovement",
+            "name": "Trans / Movement",
             "sourceEffectId": 15,
             "sourceOffset": 1703,
             "configLength": 43,
             "opaque": false,
             "settings": {
-                "colorRaw": 32767,
-                "colorHex": "#ff7f00",
+                "effect": 32767,
                 "marker": 1,
                 "eel": {
                     "point": "x=r*.318;y=d;"
                 },
+                "blend": 1,
+                "sourceMapped": 0,
+                "rectCoords": 1,
+                "subpixel": 0,
+                "wrap": 1,
                 "tailInts": [
                     1,
                     0,

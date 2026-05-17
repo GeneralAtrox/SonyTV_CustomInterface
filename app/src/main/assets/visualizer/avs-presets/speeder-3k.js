@@ -34,7 +34,7 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
             "sourceOffset": 53
         },
         {
-            "type": "dotFountain",
+            "type": "transformMovement",
             "sourceEffectId": 15,
             "sourceOffset": 65
         },
@@ -84,7 +84,7 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
             "sourceOffset": 1704
         },
         {
-            "type": "dotFountain",
+            "type": "transformMovement",
             "sourceEffectId": 15,
             "sourceOffset": 1912
         },
@@ -243,19 +243,23 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
                     }
                 },
                 {
-                    "type": "dotFountain",
-                    "name": "Dot Fountain",
+                    "type": "transformMovement",
+                    "name": "Trans / Movement",
                     "sourceEffectId": 15,
                     "sourceOffset": 65,
                     "configLength": 38,
                     "opaque": false,
                     "settings": {
-                        "colorRaw": 32767,
-                        "colorHex": "#ff7f00",
+                        "effect": 32767,
                         "marker": 1,
                         "eel": {
                             "point": "y=y-.045"
                         },
+                        "blend": 0,
+                        "sourceMapped": 0,
+                        "rectCoords": 1,
+                        "subpixel": 1,
+                        "wrap": 0,
                         "tailInts": [
                             0,
                             0,
@@ -472,19 +476,23 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
             }
         },
         {
-            "type": "dotFountain",
-            "name": "Dot Fountain",
+            "type": "transformMovement",
+            "name": "Trans / Movement",
             "sourceEffectId": 15,
             "sourceOffset": 1912,
             "configLength": 34,
             "opaque": false,
             "settings": {
-                "colorRaw": 32767,
-                "colorHex": "#ff7f00",
+                "effect": 32767,
                 "marker": 1,
                 "eel": {
                     "point": "d=0;"
                 },
+                "blend": 0,
+                "sourceMapped": 0,
+                "rectCoords": 0,
+                "subpixel": 0,
+                "wrap": 0,
                 "tailInts": [
                     0,
                     0,
