@@ -215,6 +215,159 @@ function decodeSuperScope(config) {
     };
 }
 
+function readInt32At(buffer, offset, fallback = 0) {
+    return offset + 4 <= buffer.length ? buffer.readInt32LE(offset) : fallback;
+}
+
+function readUInt32At(buffer, offset, fallback = 0) {
+    return offset + 4 <= buffer.length ? buffer.readUInt32LE(offset) >>> 0 : fallback;
+}
+
+function readSizedStringAt(buffer, offset) {
+    if (offset + 4 > buffer.length) {
+        return { value: "", nextOffset: offset };
+    }
+    const size = buffer.readInt32LE(offset);
+    const start = offset + 4;
+    const end = start + size;
+    if (size < 0 || end > buffer.length) {
+        return { value: "", nextOffset: offset };
+    }
+    return {
+        value: buffer.slice(start, end).toString("latin1").replace(/\0$/, ""),
+        nextOffset: end
+    };
+}
+
+function previewText(buffer, maxLength = 80) {
+    return buffer
+            .toString("latin1")
+            .replace(/\0/g, ".")
+            .replace(/\r/g, "\\r")
+            .replace(/\n/g, "\\n")
+            .slice(0, maxLength);
+}
+
+function previewInts(buffer, maxCount = 8) {
+    const count = Math.min(maxCount, Math.floor(buffer.length / 4));
+    const values = [];
+    for (let index = 0; index < count; index++) {
+        values.push(buffer.readInt32LE(index * 4));
+    }
+    return values;
+}
+
+function summarizeCode(text) {
+    return stripRuntimeIrrelevantEel(text)
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 96);
+}
+
+function decodeLineMode(config) {
+    const raw = readUInt32At(config, 0);
+    return {
+        raw,
+        blendModeId: raw & 0xff,
+        adjustableBlend: (raw >>> 8) & 0xff,
+        lineWidth: (raw >>> 16) & 0xff
+    };
+}
+
+function decodeFastBrightness(config) {
+    const direction = readInt32At(config, 0);
+    return {
+        direction,
+        operation: direction === 1 ? "halve" : "double"
+    };
+}
+
+function decodeIntegerConfig(config, names) {
+    const values = {};
+    for (let index = 0; index < names.length; index++) {
+        values[names[index]] = readInt32At(config, index * 4);
+    }
+    values.ints = previewInts(config);
+    return values;
+}
+
+function decodeDotFountain(config) {
+    const summary = {
+        colorRaw: readUInt32At(config, 0),
+        marker: config.length > 4 ? config[4] : 0,
+        code: "",
+        tailInts: []
+    };
+    if (summary.marker === 1) {
+        const code = readSizedStringAt(config, 5);
+        summary.code = summarizeCode(code.value);
+        for (let offset = code.nextOffset; offset + 4 <= config.length; offset += 4) {
+            summary.tailInts.push(config.readInt32LE(offset));
+        }
+    } else {
+        summary.ints = previewInts(config);
+    }
+    return summary;
+}
+
+function decodeEelBlockConfig(config) {
+    const summary = {
+        marker: config.length > 0 ? config[0] : 0,
+        code: {},
+        tailInts: []
+    };
+    if (summary.marker === 1) {
+        let offset = 1;
+        const names = ["point", "frame", "beat", "init"];
+        for (const name of names) {
+            const block = readSizedStringAt(config, offset);
+            if (block.nextOffset === offset) {
+                break;
+            }
+            summary.code[name] = summarizeCode(block.value);
+            offset = block.nextOffset;
+        }
+        for (; offset + 4 <= config.length; offset += 4) {
+            summary.tailInts.push(config.readInt32LE(offset));
+        }
+    } else {
+        summary.ints = previewInts(config);
+    }
+    return summary;
+}
+
+function decodeEffectConfig(effectId, config) {
+    if (effectId === 3) {
+        return decodeIntegerConfig(config, ["mode", "flags"]);
+    }
+    if (effectId === 6) {
+        return decodeIntegerConfig(config, ["mode"]);
+    }
+    if (effectId === 15) {
+        return decodeDotFountain(config);
+    }
+    if (effectId === 18) {
+        return decodeIntegerConfig(config, ["sourceBuffer", "destinationBuffer", "mode"]);
+    }
+    if (effectId === 37 || effectId === 38) {
+        return decodeIntegerConfig(config, ["resourceId"]);
+    }
+    if (effectId === 40) {
+        return decodeLineMode(config);
+    }
+    if (effectId === 43) {
+        return decodeEelBlockConfig(config);
+    }
+    if (effectId === 44) {
+        return decodeFastBrightness(config);
+    }
+    return {
+        length: config.length,
+        ints: previewInts(config),
+        preview: previewText(config)
+    };
+}
+
 function isPlausibleEffectId(effectId) {
     return effectId === -2 || (effectId >= 1 && effectId <= 60);
 }
@@ -314,7 +467,8 @@ function parseEffectChunks(buffer, startOffset, depth) {
             sourceOffset,
             opaque: false,
             children,
-            superScope: effectId === 36 ? decodeSuperScope(config) : null
+            superScope: effectId === 36 ? decodeSuperScope(config) : null,
+            configSummary: decodeEffectConfig(effectId, config)
         };
         effect.supported = effectIsSupported(effect);
         effects.push(effect);
@@ -391,7 +545,8 @@ function summarizePreset(filePath, rootDir, runtime) {
                 name: effect.name,
                 supported: effect.supported,
                 opaque: Boolean(effect.opaque),
-                hasSuperScopeEel: Boolean(effect.superScope)
+                hasSuperScopeEel: Boolean(effect.superScope),
+                configSummary: effect.configSummary
             })),
             unsupportedEffects: unsupported.map((effect) => ({
                 id: effect.id,
@@ -420,6 +575,40 @@ function formatEffectList(effects) {
     return effects
             .map((effect) => `${effect.name}#${effect.id}${effect.supported ? "" : "!"}`)
             .join(" -> ");
+}
+
+function formatSummary(summary) {
+    if (!summary) {
+        return "";
+    }
+    const parts = [];
+    for (const [key, value] of Object.entries(summary)) {
+        if (key === "code") {
+            if (typeof value === "string") {
+                if (value) {
+                    parts.push(`${key}="${value}"`);
+                }
+            } else {
+                const codeParts = Object.entries(value)
+                        .filter((entry) => entry[1])
+                        .map((entry) => `${entry[0]}="${entry[1]}"`);
+                if (codeParts.length > 0) {
+                    parts.push(`code:{${codeParts.join("; ")}}`);
+                }
+            }
+        } else if (Array.isArray(value)) {
+            if (value.length > 0) {
+                parts.push(`${key}=[${value.slice(0, 8).join(",")}${value.length > 8 ? ",..." : ""}]`);
+            }
+        } else if (typeof value === "string") {
+            if (value) {
+                parts.push(`${key}="${value}"`);
+            }
+        } else {
+            parts.push(`${key}=${value}`);
+        }
+    }
+    return parts.join(", ");
 }
 
 function main() {
@@ -469,6 +658,15 @@ function main() {
         console.log(`  effects: ${formatEffectList(result.effects)}`);
         if (result.unsupportedEffects.length > 0) {
             console.log(`  unsupported: ${result.unsupportedEffects.map((effect) => `${effect.name}#${effect.id}`).join(", ")}`);
+        }
+        const summarized = result.effects
+                .filter((effect) => effect.configSummary
+                        && (effect.id === 3 || effect.id === 6 || effect.id === 15 || effect.id === 18
+                                || effect.id === 37 || effect.id === 38 || effect.id === 40
+                                || effect.id === 43 || effect.id === 44))
+                .slice(0, 10);
+        for (const effect of summarized) {
+            console.log(`  config ${effect.name}#${effect.id}: ${formatSummary(effect.configSummary)}`);
         }
         if (result.eelErrors.length > 0) {
             console.log(`  eel: ${result.eelErrors.map((error) => error.message).join(" | ")}`);
