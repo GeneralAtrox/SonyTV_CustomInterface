@@ -38,6 +38,14 @@
     var waveformSamples = new Float32Array(audioSize);
     var avsNeonState = null;
     var avsNeonVertices = new Float32Array(480 * 2 * 6);
+    var avsFadeVertices = new Float32Array([
+        -1, -1, 0, 0, 0, 0.50,
+        1, -1, 0, 0, 0, 0.50,
+        -1, 1, 0, 0, 0, 0.50,
+        -1, 1, 0, 0, 0, 0.50,
+        1, -1, 0, 0, 0, 0.50,
+        1, 1, 0, 0, 0, 0.50
+    ]);
     var avsNeonFrameStarted = false;
 
     var presets = [
@@ -546,16 +554,34 @@
             my: 2,
             hu: 0,
             mf: ((getOsc(0.7) * 200) % 4 + 4) % 4,
-            u: 0
+            u: 0,
+            beatAverage: 0.18,
+            lastBeatAt: 0
         };
         avsNeonFrameStarted = false;
     }
 
-    function updateAvsNeonFrame(width, height) {
+    function detectAvsBeat(now) {
+        var s = avsNeonState;
+        var energy = Math.max(audio.rms, audio.bass * 0.72 + audio.mid * 0.28);
+        s.beatAverage += (energy - s.beatAverage) * 0.028;
+        if (now - s.lastBeatAt < 170) {
+            return false;
+        }
+        if (energy > Math.max(0.13, s.beatAverage * 1.34)) {
+            s.lastBeatAt = now;
+            s.beatAverage = s.beatAverage * 0.86 + energy * 0.14;
+            return true;
+        }
+        return false;
+    }
+
+    function updateAvsNeonFrame(now, width, height) {
         if (!avsNeonState) {
             resetAvsNeonState();
         }
         var s = avsNeonState;
+        var isBeat = detectAvsBeat(now);
         var red = eelBor(eelBelow(s.u, 5.02), eelAbove(s.u, 9.86));
         s.rx = Math.atan2(safeSqrt(sqr(s.ooz - s.oz) + sqr(s.oox - s.ox)), s.ooy - s.oy) - 1.57;
         s.ry = eelIf(red, Math.atan2(s.ooz - s.oz, s.oox - s.ox) - 1.57, -1.57 * sign(s.oox - s.ox));
@@ -582,7 +608,10 @@
         s.hp = 0;
         s.mx = 0;
         s.my = 2;
-        s.hu = s.hu + 0.005 * s.mf + getOsc(0) * 0.016;
+        s.hu = s.hu + 0.005 * s.mf;
+        if (isBeat) {
+            s.hu = s.hu + getOsc(0) * 10;
+        }
     }
 
     function avsNeonPoint(pointIndex) {
@@ -914,7 +943,7 @@
         if (!lineProgram || !lineBuffer) {
             return;
         }
-        updateAvsNeonFrame(canvas.width, canvas.height);
+        updateAvsNeonFrame(now, canvas.width, canvas.height);
         var count = avsNeonState.n;
         var vertexCount = 0;
         var previous = null;
@@ -965,14 +994,7 @@
             gl.clear(gl.COLOR_BUFFER_BIT);
             avsNeonFrameStarted = true;
         } else {
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-                -1, -1, 0, 0, 0, 0.50,
-                1, -1, 0, 0, 0, 0.50,
-                -1, 1, 0, 0, 0, 0.50,
-                -1, 1, 0, 0, 0, 0.50,
-                1, -1, 0, 0, 0, 0.50,
-                1, 1, 0, 0, 0, 0.50
-            ]), gl.STREAM_DRAW);
+            gl.bufferData(gl.ARRAY_BUFFER, avsFadeVertices, gl.STATIC_DRAW);
             gl.enable(gl.BLEND);
             gl.blendEquation(gl.FUNC_ADD);
             gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -981,10 +1003,11 @@
 
         gl.bufferData(gl.ARRAY_BUFFER, avsNeonVertices, gl.DYNAMIC_DRAW);
         gl.enable(gl.BLEND);
-        gl.blendEquation(gl.FUNC_ADD);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        gl.blendEquation(gl.MAX);
+        gl.blendFunc(gl.ONE, gl.ONE);
         gl.lineWidth(3);
         gl.drawArrays(gl.LINES, 0, vertexCount);
+        gl.blendEquation(gl.FUNC_ADD);
         gl.disable(gl.BLEND);
     }
 
