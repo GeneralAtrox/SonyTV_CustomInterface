@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, "..");
 const DEFAULT_PRESET_DIR = "C:\\Program Files (x86)\\Winamp\\Plugins\\AVS";
 const SIGNATURE = Buffer.from("Nullsoft AVS Preset 0.2\x1a", "binary");
 
-const SUPPORTED_EFFECT_IDS = new Set([3, 6, 15, 18, 21, 36, 37, 38, 40, 42, 43, 44]);
+const SUPPORTED_EFFECT_IDS = new Set([3, 6, 15, 18, 20, 21, 36, 37, 38, 40, 42, 43, 44]);
 const EFFECT_NAMES = new Map([
     [-2, "Effect List"],
     [0, "Effect List"],
@@ -349,6 +349,9 @@ function decodeEffectConfig(effectId, config) {
     if (effectId === 18) {
         return decodeIntegerConfig(config, ["sourceBuffer", "destinationBuffer", "mode"]);
     }
+    if (effectId === 20) {
+        return decodeIntegerConfig(config, ["enabled", "onBeat", "durationFrames", "depth", "beatDepth", "blend", "blendAverage"]);
+    }
     if (effectId === 37 || effectId === 38) {
         return decodeIntegerConfig(config, ["resourceId"]);
     }
@@ -661,7 +664,7 @@ function main() {
         }
         const summarized = result.effects
                 .filter((effect) => effect.configSummary
-                        && (effect.id === 3 || effect.id === 6 || effect.id === 15 || effect.id === 18
+                        && (effect.id === 3 || effect.id === 6 || effect.id === 15 || effect.id === 18 || effect.id === 20
                                 || effect.id === 37 || effect.id === 38 || effect.id === 40
                                 || effect.id === 43 || effect.id === 44))
                 .slice(0, 10);

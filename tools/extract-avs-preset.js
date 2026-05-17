@@ -65,6 +65,7 @@ const EFFECT_TYPES = new Map([
     [6, "colorFade"],
     [15, "dotFountain"],
     [18, "bufferBlit"],
+    [20, "bump"],
     [21, "comment"],
     [36, "superScope"],
     [37, "texer"],
@@ -359,6 +360,9 @@ function decodeEffectSettings(effectId, config) {
     }
     if (effectId === 18) {
         return decodeIntegerConfig(config, ["sourceBuffer", "destinationBuffer", "mode"]);
+    }
+    if (effectId === 20) {
+        return decodeIntegerConfig(config, ["enabled", "onBeat", "durationFrames", "depth", "beatDepth", "blend", "blendAverage"]);
     }
     if (effectId === 36) {
         return decodeSuperScope(config);

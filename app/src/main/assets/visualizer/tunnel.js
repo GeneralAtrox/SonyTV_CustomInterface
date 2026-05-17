@@ -753,6 +753,13 @@
                     kind: "bufferBlit",
                     settings: effect.settings || {}
                 });
+            } else if (effect.type === "bump") {
+                runtime.renderers.push({
+                    kind: "bump",
+                    settings: effect.settings || {},
+                    phase: 0,
+                    beatDepth: 0
+                });
             } else if (effect.type === "colorFade") {
                 runtime.renderers.push({
                     kind: "colorFade",
@@ -906,6 +913,10 @@
             renderAvsColorFade(renderer);
             return;
         }
+        if (renderer.kind === "bump") {
+            renderAvsBump(renderer, isBeat);
+            return;
+        }
         if (renderer.kind === "oscilloscope") {
             renderAvsOscilloscopeRenderer(renderer);
             return;
@@ -1003,6 +1014,56 @@
         var mode = renderer.settings ? renderer.settings.mode : 0;
         var alpha = mode === 1 ? 0.10 : (mode === 2 ? 0.16 : 0.07);
         drawAvsBlackFade(alpha);
+    }
+
+    function renderAvsBump(renderer, isBeat) {
+        if (renderer.settings && renderer.settings.enabled === 0) {
+            return;
+        }
+        var baseDepth = renderer.settings && renderer.settings.depth
+                ? clamp(renderer.settings.depth / 100, 0.05, 1)
+                : 0.30;
+        var beatDepth = renderer.settings && renderer.settings.beatDepth
+                ? clamp(renderer.settings.beatDepth / 100, 0.05, 1)
+                : baseDepth * 1.4;
+        if (isBeat) {
+            renderer.beatDepth = beatDepth;
+        }
+        renderer.beatDepth *= 0.88;
+        renderer.phase = wrap01((renderer.phase || 0) + 0.010 + audio.bass * 0.014);
+
+        var depth = Math.max(baseDepth, renderer.beatDepth || 0);
+        var segments = 40;
+        var rings = 3;
+        ensureAvsStackVertexCapacity(segments * rings, 6);
+        var vertexCount = 0;
+        var start = avsStackPreviousScratch;
+        var end = avsStackPointScratch;
+        for (var ring = 0; ring < rings; ring++) {
+            var radius = 0.16 + wrap01(renderer.phase + ring / rings) * 1.18;
+            var alpha = (1 - ring / rings) * depth * 0.10;
+            var wobble = visualTimeSeconds * (0.35 + ring * 0.11);
+            for (var segment = 0; segment < segments; segment++) {
+                var a0 = segment / segments * Math.PI * 2;
+                var a1 = (segment + 1) / segments * Math.PI * 2;
+                var r0 = radius + Math.sin(a0 * 3 + wobble) * 0.018;
+                var r1 = radius + Math.sin(a1 * 3 + wobble) * 0.018;
+                start[0] = Math.cos(a0) * r0;
+                start[1] = Math.sin(a0) * r0;
+                start[2] = 0.05;
+                start[3] = 0.22 + audio.mid * 0.08;
+                start[4] = 0.24 + audio.treb * 0.10;
+                start[5] = alpha;
+                end[0] = Math.cos(a1) * r1;
+                end[1] = Math.sin(a1) * r1;
+                end[2] = start[2];
+                end[3] = start[3];
+                end[4] = start[4];
+                end[5] = alpha;
+                vertexCount = addAvsSegmentTo(avsStackVertices, vertexCount, start, end, 1);
+            }
+        }
+        drawAvsVertices(avsStackVertices, vertexCount, "additive");
     }
 
     function renderAvsOscilloscopeRenderer(renderer) {

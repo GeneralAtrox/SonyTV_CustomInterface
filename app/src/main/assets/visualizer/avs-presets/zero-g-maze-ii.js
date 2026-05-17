@@ -24,7 +24,7 @@ window.braviaAvsPresetDefinitions["zeroGMazeII"] = {
             "sourceOffset": 37
         },
         {
-            "type": "unsupported",
+            "type": "bump",
             "sourceEffectId": 20,
             "sourceOffset": 49
         },
@@ -106,18 +106,23 @@ window.braviaAvsPresetDefinitions["zeroGMazeII"] = {
                     }
                 },
                 {
-                    "type": "unsupported",
+                    "type": "bump",
                     "name": "Bump",
                     "sourceEffectId": 20,
                     "sourceOffset": 49,
                     "configLength": 4,
                     "opaque": false,
                     "settings": {
-                        "length": 4,
+                        "enabled": 1,
+                        "onBeat": 0,
+                        "durationFrames": 0,
+                        "depth": 0,
+                        "beatDepth": 0,
+                        "blend": 0,
+                        "blendAverage": 0,
                         "ints": [
                             1
-                        ],
-                        "preview": "\u0001..."
+                        ]
                     }
                 },
                 {
