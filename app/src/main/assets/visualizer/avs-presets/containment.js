@@ -64,7 +64,7 @@ window.braviaAvsPresetDefinitions["containment"] = {
             "sourceOffset": 649
         },
         {
-            "type": "bufferBlit",
+            "type": "bufferSave",
             "sourceEffectId": 18,
             "sourceOffset": 865
         },
@@ -79,7 +79,7 @@ window.braviaAvsPresetDefinitions["containment"] = {
             "sourceOffset": 1703
         },
         {
-            "type": "renderState",
+            "type": "dynamicMovement",
             "sourceEffectId": 43,
             "sourceOffset": 1754
         },
@@ -89,7 +89,7 @@ window.braviaAvsPresetDefinitions["containment"] = {
             "sourceOffset": 2598
         },
         {
-            "type": "renderState",
+            "type": "dynamicMovement",
             "sourceEffectId": 43,
             "sourceOffset": 37
         },
@@ -344,16 +344,17 @@ window.braviaAvsPresetDefinitions["containment"] = {
                     }
                 },
                 {
-                    "type": "bufferBlit",
-                    "name": "Buffer Blit",
+                    "type": "bufferSave",
+                    "name": "Buffer Save",
                     "sourceEffectId": 18,
                     "sourceOffset": 865,
                     "configLength": 12,
                     "opaque": false,
                     "settings": {
-                        "sourceBuffer": 0,
-                        "destinationBuffer": 0,
-                        "mode": 0,
+                        "direction": 0,
+                        "bufferIndex": 0,
+                        "blendMode": 0,
+                        "adjustableBlend": 128,
                         "ints": [
                             0,
                             0,
@@ -399,8 +400,8 @@ window.braviaAvsPresetDefinitions["containment"] = {
             }
         },
         {
-            "type": "renderState",
-            "name": "Render State",
+            "type": "dynamicMovement",
+            "name": "Dynamic Movement",
             "sourceEffectId": 43,
             "sourceOffset": 1754,
             "configLength": 836,
@@ -422,7 +423,15 @@ window.braviaAvsPresetDefinitions["containment"] = {
                     1,
                     1,
                     0
-                ]
+                ],
+                "subpixel": 0,
+                "rectCoords": 1,
+                "xResolution": 25,
+                "yResolution": 7,
+                "blend": 1,
+                "wrap": 1,
+                "bufferNumber": 1,
+                "noMovement": 0
             }
         },
         {
@@ -452,8 +461,8 @@ window.braviaAvsPresetDefinitions["containment"] = {
             "nestedOffset": 37,
             "effects": [
                 {
-                    "type": "renderState",
-                    "name": "Render State",
+                    "type": "dynamicMovement",
+                    "name": "Dynamic Movement",
                     "sourceEffectId": 43,
                     "sourceOffset": 37,
                     "configLength": 836,
@@ -475,7 +484,15 @@ window.braviaAvsPresetDefinitions["containment"] = {
                             1,
                             1,
                             0
-                        ]
+                        ],
+                        "subpixel": 0,
+                        "rectCoords": 1,
+                        "xResolution": 25,
+                        "yResolution": 7,
+                        "blend": 1,
+                        "wrap": 1,
+                        "bufferNumber": 1,
+                        "noMovement": 0
                     }
                 }
             ]

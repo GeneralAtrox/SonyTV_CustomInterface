@@ -44,7 +44,7 @@ window.braviaAvsPresetDefinitions["zeroGMazeII"] = {
             "sourceOffset": 77
         },
         {
-            "type": "bufferBlit",
+            "type": "bufferSave",
             "sourceEffectId": 18,
             "sourceOffset": 337
         },
@@ -59,7 +59,7 @@ window.braviaAvsPresetDefinitions["zeroGMazeII"] = {
             "sourceOffset": 37
         },
         {
-            "type": "bufferBlit",
+            "type": "bufferSave",
             "sourceEffectId": 18,
             "sourceOffset": 80
         },
@@ -79,7 +79,7 @@ window.braviaAvsPresetDefinitions["zeroGMazeII"] = {
             "sourceOffset": 225
         },
         {
-            "type": "renderState",
+            "type": "dynamicMovement",
             "sourceEffectId": 43,
             "sourceOffset": 1857
         }
@@ -194,16 +194,17 @@ window.braviaAvsPresetDefinitions["zeroGMazeII"] = {
                     }
                 },
                 {
-                    "type": "bufferBlit",
-                    "name": "Buffer Blit",
+                    "type": "bufferSave",
+                    "name": "Buffer Save",
                     "sourceEffectId": 18,
                     "sourceOffset": 337,
                     "configLength": 12,
                     "opaque": false,
                     "settings": {
-                        "sourceBuffer": 0,
-                        "destinationBuffer": 0,
-                        "mode": 1,
+                        "direction": 0,
+                        "bufferIndex": 0,
+                        "blendMode": 1,
+                        "adjustableBlend": 128,
                         "ints": [
                             0,
                             0,
@@ -261,16 +262,17 @@ window.braviaAvsPresetDefinitions["zeroGMazeII"] = {
                             }
                         },
                         {
-                            "type": "bufferBlit",
-                            "name": "Buffer Blit",
+                            "type": "bufferSave",
+                            "name": "Buffer Save",
                             "sourceEffectId": 18,
                             "sourceOffset": 80,
                             "configLength": 12,
                             "opaque": false,
                             "settings": {
-                                "sourceBuffer": 0,
-                                "destinationBuffer": 0,
-                                "mode": 2,
+                                "direction": 0,
+                                "bufferIndex": 0,
+                                "blendMode": 2,
+                                "adjustableBlend": 128,
                                 "ints": [
                                     0,
                                     0,
@@ -364,8 +366,8 @@ window.braviaAvsPresetDefinitions["zeroGMazeII"] = {
             ]
         },
         {
-            "type": "renderState",
-            "name": "Render State",
+            "type": "dynamicMovement",
+            "name": "Dynamic Movement",
             "sourceEffectId": 43,
             "sourceOffset": 1857,
             "configLength": 2151,
@@ -387,7 +389,15 @@ window.braviaAvsPresetDefinitions["zeroGMazeII"] = {
                     1,
                     1,
                     0
-                ]
+                ],
+                "subpixel": 0,
+                "rectCoords": 1,
+                "xResolution": 32,
+                "yResolution": 32,
+                "blend": 1,
+                "wrap": 1,
+                "bufferNumber": 1,
+                "noMovement": 0
             }
         }
     ],

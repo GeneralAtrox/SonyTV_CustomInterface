@@ -22,6 +22,13 @@
     var lineLocations = {};
     var avsCopyProgram = null;
     var avsCopyLocations = {};
+    var avsBlendProgram = null;
+    var avsBlendLocations = {};
+    var avsWarpProgram = null;
+    var avsWarpLocations = {};
+    var avsWarpBuffer = null;
+    var avsWarpVertices = new Float32Array(32 * 32 * 6 * 5);
+    var avsWarpMap = new Float32Array(33 * 33 * 3);
     var avsFeedbackProgram = null;
     var avsFeedbackLocations = {};
     var avsFramebufferState = null;
@@ -440,6 +447,83 @@
         + "    outColor = vec4(color.rgb * u_gain, color.a * u_opacity);\n"
         + "}\n";
 
+    var avsBlendFragmentSource = "#version 300 es\n"
+        + "precision highp float;\n"
+        + "in vec2 v_uv;\n"
+        + "uniform sampler2D u_source;\n"
+        + "uniform sampler2D u_destination;\n"
+        + "uniform vec2 u_resolution;\n"
+        + "uniform float u_mode;\n"
+        + "uniform float u_adjust;\n"
+        + "out vec4 outColor;\n"
+        + "vec3 clampColor(vec3 value) {\n"
+        + "    return clamp(value, vec3(0.0), vec3(1.0));\n"
+        + "}\n"
+        + "void main() {\n"
+        + "    vec4 source = texture(u_source, v_uv);\n"
+        + "    vec4 destination = texture(u_destination, v_uv);\n"
+        + "    vec3 result = source.rgb;\n"
+        + "    if (u_mode < 0.5) {\n"
+        + "        result = source.rgb;\n"
+        + "    } else if (u_mode < 1.5) {\n"
+        + "        result = (destination.rgb + source.rgb) * 0.5;\n"
+        + "    } else if (u_mode < 2.5) {\n"
+        + "        result = clampColor(destination.rgb + source.rgb);\n"
+        + "    } else if (u_mode < 3.5) {\n"
+        + "        vec2 pixel = floor(v_uv * u_resolution);\n"
+        + "        result = mod(pixel.x + pixel.y, 2.0) < 1.0 ? source.rgb : destination.rgb;\n"
+        + "    } else if (u_mode < 4.5) {\n"
+        + "        result = clampColor(destination.rgb - source.rgb);\n"
+        + "    } else if (u_mode < 5.5) {\n"
+        + "        vec2 pixel = floor(v_uv * u_resolution);\n"
+        + "        result = mod(pixel.y, 2.0) < 1.0 ? source.rgb : destination.rgb;\n"
+        + "    } else if (u_mode < 6.5) {\n"
+        + "        result = abs(destination.rgb - source.rgb);\n"
+        + "    } else if (u_mode < 7.5) {\n"
+        + "        result = max(destination.rgb, source.rgb);\n"
+        + "    } else if (u_mode < 8.5) {\n"
+        + "        result = min(destination.rgb, source.rgb);\n"
+        + "    } else if (u_mode < 9.5) {\n"
+        + "        result = clampColor(source.rgb - destination.rgb);\n"
+        + "    } else if (u_mode < 10.5) {\n"
+        + "        result = destination.rgb * source.rgb;\n"
+        + "    } else {\n"
+        + "        float alpha = clamp(u_adjust / 255.0, 0.0, 1.0);\n"
+        + "        result = mix(destination.rgb, source.rgb, alpha);\n"
+        + "    }\n"
+        + "    outColor = vec4(result, max(source.a, destination.a));\n"
+        + "}\n";
+
+    var avsWarpVertexSource = "#version 300 es\n"
+        + "in vec2 a_position;\n"
+        + "in vec2 a_uv;\n"
+        + "in float a_alpha;\n"
+        + "out vec2 v_uv;\n"
+        + "out vec2 v_screenUv;\n"
+        + "out float v_alpha;\n"
+        + "void main() {\n"
+        + "    v_uv = a_uv;\n"
+        + "    v_screenUv = a_position * 0.5 + 0.5;\n"
+        + "    v_alpha = a_alpha;\n"
+        + "    gl_Position = vec4(a_position, 0.0, 1.0);\n"
+        + "}\n";
+
+    var avsWarpFragmentSource = "#version 300 es\n"
+        + "precision highp float;\n"
+        + "in vec2 v_uv;\n"
+        + "in vec2 v_screenUv;\n"
+        + "in float v_alpha;\n"
+        + "uniform sampler2D u_source;\n"
+        + "uniform sampler2D u_destination;\n"
+        + "uniform float u_blend;\n"
+        + "out vec4 outColor;\n"
+        + "void main() {\n"
+        + "    vec4 moved = texture(u_source, clamp(v_uv, vec2(0.0), vec2(1.0)));\n"
+        + "    vec4 base = texture(u_destination, v_screenUv);\n"
+        + "    float alpha = clamp(v_alpha, 0.0, 1.0);\n"
+        + "    outColor = u_blend > 0.5 ? mix(base, moved, alpha) : moved;\n"
+        + "}\n";
+
     var avsFeedbackFragmentSource = "#version 300 es\n"
         + "precision highp float;\n"
         + "in vec2 v_uv;\n"
@@ -791,11 +875,18 @@
         }
         destroyAvsRenderTarget(avsFramebufferState.front);
         destroyAvsRenderTarget(avsFramebufferState.scratch);
+        if (avsFramebufferState.buffers) {
+            for (var index = 0; index < avsFramebufferState.buffers.length; index++) {
+                destroyAvsRenderTarget(avsFramebufferState.buffers[index]);
+            }
+        }
         avsFramebufferState = null;
     }
 
     function ensureAvsFramebuffers() {
-        if (!gl || !avsCopyProgram || !avsFeedbackProgram || !quadBuffer || canvas.width <= 0 || canvas.height <= 0) {
+        if (!gl || !avsCopyProgram || !avsBlendProgram || !avsWarpProgram || !avsFeedbackProgram
+                || !quadBuffer || !avsWarpBuffer
+                || canvas.width <= 0 || canvas.height <= 0) {
             return null;
         }
         if (avsFramebufferState && avsFramebufferState.width === canvas.width
@@ -814,7 +905,8 @@
             width: canvas.width,
             height: canvas.height,
             front: front,
-            scratch: scratch
+            scratch: scratch,
+            buffers: new Array(8)
         };
         safeBridge("reportEvent", "avs_framebuffer_" + canvas.width + "x" + canvas.height);
         return avsFramebufferState;
@@ -860,60 +952,116 @@
         copyAvsTexture(texture, null, 1);
     }
 
-    function blendAvsTextureToTarget(texture, target, blendMode, blendValue) {
-        if (!texture || !target || !avsCopyProgram || blendMode === 0) {
+    function effectListBlendToInternalMode(blendMode) {
+        if (blendMode === 1) {
+            return 0;
+        }
+        if (blendMode === 2) {
+            return 1;
+        }
+        if (blendMode === 3) {
+            return 7;
+        }
+        if (blendMode === 4) {
+            return 2;
+        }
+        if (blendMode === 5) {
+            return 4;
+        }
+        if (blendMode === 6) {
+            return 9;
+        }
+        if (blendMode === 7) {
+            return 5;
+        }
+        if (blendMode === 8) {
+            return 3;
+        }
+        if (blendMode === 9) {
+            return 6;
+        }
+        if (blendMode === 10) {
+            return 11;
+        }
+        if (blendMode === 11) {
+            return 10;
+        }
+        if (blendMode === 13) {
+            return 8;
+        }
+        return -1;
+    }
+
+    function composeAvsTextures(sourceTexture, destinationTexture, target, internalMode, adjust) {
+        if (!sourceTexture || !destinationTexture || !target || !avsBlendProgram) {
             return false;
         }
-        if (blendMode === 1) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+        gl.viewport(0, 0, target.width, target.height);
+        gl.useProgram(avsBlendProgram);
+        bindAvsQuad(avsBlendLocations.position);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+        gl.uniform1i(avsBlendLocations.source, 0);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, destinationTexture);
+        gl.uniform1i(avsBlendLocations.destination, 1);
+        gl.uniform2f(avsBlendLocations.resolution, target.width, target.height);
+        gl.uniform1f(avsBlendLocations.mode, internalMode);
+        gl.uniform1f(avsBlendLocations.adjust, adjust == null ? 128 : adjust);
+        gl.disable(gl.BLEND);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.activeTexture(gl.TEXTURE0);
+        return true;
+    }
+
+    function blendAvsTextureToTarget(texture, target, blendMode, blendValue, tempTarget) {
+        if (!texture || !target || blendMode === 0) {
+            return false;
+        }
+        var internalMode = effectListBlendToInternalMode(blendMode);
+        if (internalMode < 0) {
+            return false;
+        }
+        if (internalMode === 0) {
             copyAvsTexture(texture, target, 1);
             return true;
         }
-        if (!(blendMode === 2 || blendMode === 3 || blendMode === 4 || blendMode === 5
-                || blendMode === 6 || blendMode === 7 || blendMode === 8 || blendMode === 10
-                || blendMode === 11 || blendMode === 13)) {
+        if (!tempTarget) {
             return false;
         }
-
-        var opacity = blendMode === 10
-                ? clamp((blendValue == null ? 128 : blendValue) / 255, 0, 1)
-                : 1;
-        gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
-        gl.viewport(0, 0, target.width, target.height);
-        gl.useProgram(avsCopyProgram);
-        bindAvsQuad(avsCopyLocations.position);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.uniform1i(avsCopyLocations.texture, 0);
-        gl.uniform1f(avsCopyLocations.opacity, opacity);
-        gl.uniform1f(avsCopyLocations.gain, 1);
-        gl.enable(gl.BLEND);
-        gl.blendEquation(gl.FUNC_ADD);
-        if (blendMode === 2 || blendMode === 7 || blendMode === 8) {
-            gl.uniform1f(avsCopyLocations.opacity, 0.5);
-            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        } else if (blendMode === 3) {
-            gl.blendEquation(gl.MAX);
-            gl.blendFunc(gl.ONE, gl.ONE);
-        } else if (blendMode === 4) {
-            gl.blendFunc(gl.ONE, gl.ONE);
-        } else if (blendMode === 5) {
-            gl.blendEquation(gl.FUNC_REVERSE_SUBTRACT);
-            gl.blendFunc(gl.ONE, gl.ONE);
-        } else if (blendMode === 6) {
-            gl.blendEquation(gl.FUNC_SUBTRACT);
-            gl.blendFunc(gl.ONE, gl.ONE);
-        } else if (blendMode === 10) {
-            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        } else if (blendMode === 11) {
-            gl.blendFunc(gl.DST_COLOR, gl.ZERO);
-        } else if (blendMode === 13 && gl.MIN) {
-            gl.blendEquation(gl.MIN);
-            gl.blendFunc(gl.ONE, gl.ONE);
+        if (!composeAvsTextures(texture, target.texture, tempTarget, internalMode, blendValue)) {
+            return false;
         }
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-        gl.blendEquation(gl.FUNC_ADD);
-        gl.disable(gl.BLEND);
+        copyAvsTexture(tempTarget.texture, target, 1);
         return true;
+    }
+
+    function ensureAvsGlobalBuffer(bufferIndex, shouldAllocate) {
+        var state = ensureAvsFramebuffers();
+        if (!state || !state.buffers) {
+            return null;
+        }
+        var index = Math.max(0, Math.min(7, Math.round(bufferIndex || 0)));
+        var target = state.buffers[index];
+        if (target && target.width === state.width && target.height === state.height) {
+            return target;
+        }
+        destroyAvsRenderTarget(target);
+        state.buffers[index] = null;
+        if (!shouldAllocate) {
+            return null;
+        }
+        target = createAvsRenderTarget(state.width, state.height);
+        if (!target) {
+            return null;
+        }
+        clearAvsRenderTarget(target);
+        state.buffers[index] = target;
+        bindAvsLineTarget(state.front);
+        return target;
     }
 
     function swapAvsFramebuffers() {
@@ -1059,6 +1207,7 @@
             y: 0,
             r: 0,
             d: 0,
+            b: 0,
             red: 0,
             green: 0,
             blue: 0,
@@ -1071,7 +1220,7 @@
     function createAvsEelRenderer(kind, settings, sampleCount, drawMode, lineMode, colors, texer) {
         var suite = avsEel.compileSuite(settings.eel || {});
         var scope = suite.createScope(createAvsInitialState(sampleCount));
-        var slots = suite.slots(["n", "w", "h", "i", "x", "y", "r", "d", "red", "green", "blue", "alpha"]);
+        var slots = suite.slots(["n", "w", "h", "i", "x", "y", "r", "d", "b", "red", "green", "blue", "alpha"]);
         suite.init.run(scope, avsEelHost());
         sampleCount = normalizeAvsSampleCount(suite.getSlot(scope, slots.n), sampleCount);
         return {
@@ -1153,9 +1302,9 @@
                     kind: "fastBrightness",
                     settings: effect.settings || {}
                 });
-            } else if (effect.type === "bufferBlit") {
+            } else if (effect.type === "bufferSave" || effect.type === "bufferBlit") {
                 addAvsRuntimeRenderer(runtime, nodes, {
-                    kind: "bufferBlit",
+                    kind: "bufferSave",
                     settings: effect.settings || {}
                 });
             } else if (effect.type === "clearScreen") {
@@ -1209,8 +1358,9 @@
                         180, "points", context.lineMode, [createAvsColor(effect.settings.colorRaw)],
                         context.pendingTexer));
                 context.pendingTexer = null;
-            } else if (effect.type === "renderState" && effect.settings && effect.settings.eel) {
-                addAvsRuntimeRenderer(runtime, nodes, createAvsEelRenderer("renderState", effect.settings,
+            } else if ((effect.type === "dynamicMovement" || effect.type === "renderState")
+                    && effect.settings && effect.settings.eel) {
+                addAvsRuntimeRenderer(runtime, nodes, createAvsEelRenderer("dynamicMovement", effect.settings,
                         0, "points", context.lineMode, [createAvsColor(0x8af6ff)], context.pendingTexer));
                 context.pendingTexer = null;
             } else if (effect.type === "superScope" && effect.settings && effect.settings.eel) {
@@ -1312,6 +1462,17 @@
         }
     }
 
+    function ensureAvsWarpCapacity(pointCount, vertexCount) {
+        var mapRequired = Math.max(1, pointCount) * 3;
+        var vertexRequired = Math.max(6, vertexCount) * 5;
+        if (avsWarpMap.length < mapRequired) {
+            avsWarpMap = new Float32Array(mapRequired);
+        }
+        if (avsWarpVertices.length < vertexRequired) {
+            avsWarpVertices = new Float32Array(vertexRequired);
+        }
+    }
+
     function avsColorComponent(color, shift) {
         return ((color >>> shift) & 0xff) / 255;
     }
@@ -1361,8 +1522,8 @@
             renderAvsFastBrightness(renderer);
             return;
         }
-        if (renderer.kind === "bufferBlit") {
-            renderAvsBufferBlit(renderer);
+        if (renderer.kind === "bufferSave") {
+            renderAvsBufferSave(renderer);
             return;
         }
         if (renderer.kind === "clearScreen") {
@@ -1397,6 +1558,10 @@
             renderAvsDotFountainRenderer(renderer, isBeat);
             return;
         }
+        if (renderer.kind === "dynamicMovement") {
+            renderAvsDynamicMovementRenderer(renderer, isBeat);
+            return;
+        }
         if (renderer.kind === "renderState") {
             renderAvsRenderStateRenderer(renderer, isBeat);
             return;
@@ -1410,6 +1575,8 @@
         var slots = renderer.slots;
         suite.setSlot(scope, slots.w, canvas.width);
         suite.setSlot(scope, slots.h, Math.max(1, canvas.height));
+        suite.setSlot(scope, slots.b, isBeat ? 1 : 0);
+        suite.setSlot(scope, slots.alpha, 0.5);
         if (!runAvsStackProgram(suite, suite.frame, scope)) {
             return;
         }
@@ -1491,18 +1658,41 @@
         bindAvsLineTarget(avsFramebufferState.front);
     }
 
-    function renderAvsBufferBlit(renderer) {
-        var mode = renderer.settings ? renderer.settings.mode : 0;
-        if (mode === 1 || mode === 2 || mode === 7) {
-            var amount = mode === 1 ? 0.60 : (mode === 2 ? 0.38 : 0.20);
-            if (applyAvsFeedbackPass(3, amount, visualTimeSeconds * 0.72 + mode)) {
-                drawAvsBlackFade(mode === 1 ? 0.035 : 0.020);
-                return;
+    function renderAvsBufferSave(renderer) {
+        var state = ensureAvsFramebuffers();
+        if (!state) {
+            return;
+        }
+        var settings = renderer.settings || {};
+        var direction = Math.round(settings.direction == null ? settings.sourceBuffer || 0 : settings.direction);
+        var bufferIndex = Math.round(settings.bufferIndex == null ? settings.destinationBuffer || 0 : settings.bufferIndex);
+        var blendMode = Math.round(settings.blendMode == null ? settings.mode || 0 : settings.blendMode);
+        var adjust = settings.adjustableBlend == null ? 128 : settings.adjustableBlend;
+        var transferDirection = direction < 2 ? direction : ((direction & 1) ^ (renderer.directionToggle ? 1 : 0));
+        renderer.directionToggle = !renderer.directionToggle;
+
+        var buffer = ensureAvsGlobalBuffer(bufferIndex, transferDirection !== 1);
+        if (!buffer) {
+            return;
+        }
+
+        if (transferDirection === 0) {
+            if (blendMode === 0) {
+                copyAvsTexture(state.front.texture, buffer, 1);
+            } else if (composeAvsTextures(state.front.texture, buffer.texture, state.scratch, blendMode, adjust)) {
+                copyAvsTexture(state.scratch.texture, buffer, 1);
             }
+            bindAvsLineTarget(state.front);
+            return;
         }
-        if (mode !== 0) {
-            drawAvsBlackFade(0.035);
+
+        if (blendMode === 0) {
+            copyAvsTexture(buffer.texture, state.scratch, 1);
+        } else if (!composeAvsTextures(buffer.texture, state.front.texture, state.scratch, blendMode, adjust)) {
+            return;
         }
+        swapAvsFramebuffers();
+        bindAvsLineTarget(avsFramebufferState.front);
     }
 
     function renderAvsColorFade(renderer) {
@@ -1767,6 +1957,183 @@
         drawAvsVertices(avsStackVertices, vertexCount, renderer.lineMode.blendMode);
     }
 
+    function wrapPixelCoordinate(value, size) {
+        if (size <= 0) {
+            return 0;
+        }
+        return ((value % size) + size) % size;
+    }
+
+    function writeAvsDynamicMovementMapPoint(renderer, settings, column, row, columns, rows, isBeat, outputIndex) {
+        var suite = renderer.suite;
+        var scope = renderer.scope;
+        var slots = renderer.slots;
+        var width = Math.max(1, avsFramebufferState.width);
+        var height = Math.max(1, avsFramebufferState.height);
+        var halfWidth = width * 0.5;
+        var halfHeight = height * 0.5;
+        var unitX = columns <= 1 ? 0.5 : column / (columns - 1);
+        var unitY = rows <= 1 ? 0.5 : row / (rows - 1);
+        var pixelX = unitX * width;
+        var pixelY = unitY * height;
+        var dx = pixelX - halfWidth;
+        var dy = pixelY - halfHeight;
+        var maxDistance = Math.max(0.0001, Math.sqrt(width * width + height * height) * 0.5);
+        var x = dx * 2 / width;
+        var y = dy * 2 / height;
+        var d = Math.sqrt(dx * dx + dy * dy) / maxDistance;
+        var r = Math.atan2(dy, dx) + Math.PI * 0.5;
+        var pointCount = Math.max(1, columns * rows - 1);
+        var pointIndex = row * columns + column;
+
+        suite.setSlot(scope, slots.i, pointIndex / pointCount);
+        suite.setSlot(scope, slots.x, x);
+        suite.setSlot(scope, slots.y, y);
+        suite.setSlot(scope, slots.r, r);
+        suite.setSlot(scope, slots.d, d);
+        suite.setSlot(scope, slots.b, isBeat ? 1 : 0);
+        suite.setSlot(scope, slots.alpha, 0.5);
+        if (!runAvsStackProgram(suite, suite.point, scope)) {
+            return false;
+        }
+
+        var sourceX = slots.x >= 0 ? suite.getSlot(scope, slots.x) : x;
+        var sourceY = slots.y >= 0 ? suite.getSlot(scope, slots.y) : y;
+        if (settings.rectCoords) {
+            sourceX = (sourceX + 1) * halfWidth;
+            sourceY = (sourceY + 1) * halfHeight;
+        } else {
+            var sourceD = (slots.d >= 0 ? suite.getSlot(scope, slots.d) : d) * maxDistance;
+            var sourceR = (slots.r >= 0 ? suite.getSlot(scope, slots.r) : r) - Math.PI * 0.5;
+            sourceX = halfWidth + Math.cos(sourceR) * sourceD;
+            sourceY = halfHeight + Math.sin(sourceR) * sourceD;
+        }
+
+        if (!isFinite(sourceX)) {
+            sourceX = pixelX;
+        }
+        if (!isFinite(sourceY)) {
+            sourceY = pixelY;
+        }
+
+        if (settings.wrap) {
+            sourceX = wrapPixelCoordinate(sourceX, width);
+            sourceY = wrapPixelCoordinate(sourceY, height);
+        } else {
+            sourceX = clamp(sourceX, 0, width - 1);
+            sourceY = clamp(sourceY, 0, height - 1);
+        }
+
+        if (!settings.subpixel) {
+            sourceX = Math.round(sourceX);
+            sourceY = Math.round(sourceY);
+        }
+
+        var alpha = slots.alpha >= 0 ? suite.getSlot(scope, slots.alpha) : 1;
+        avsWarpMap[outputIndex] = clamp((sourceX + 0.5) / width, 0, 1);
+        avsWarpMap[outputIndex + 1] = clamp((sourceY + 0.5) / height, 0, 1);
+        avsWarpMap[outputIndex + 2] = clamp(isFinite(alpha) ? alpha : 1, 0, 1);
+        return true;
+    }
+
+    function appendAvsWarpVertex(vertexCount, column, row, columns, rows) {
+        var mapIndex = (row * columns + column) * 3;
+        var offset = vertexCount * 5;
+        avsWarpVertices[offset] = columns <= 1 ? 0 : column / (columns - 1) * 2 - 1;
+        avsWarpVertices[offset + 1] = rows <= 1 ? 0 : row / (rows - 1) * 2 - 1;
+        avsWarpVertices[offset + 2] = avsWarpMap[mapIndex];
+        avsWarpVertices[offset + 3] = avsWarpMap[mapIndex + 1];
+        avsWarpVertices[offset + 4] = avsWarpMap[mapIndex + 2];
+        return vertexCount + 1;
+    }
+
+    function drawAvsDynamicMovementMesh(sourceTarget, blendEnabled, vertexCount) {
+        var state = avsFramebufferState;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, state.scratch.framebuffer);
+        gl.viewport(0, 0, state.scratch.width, state.scratch.height);
+        gl.useProgram(avsWarpProgram);
+        gl.bindBuffer(gl.ARRAY_BUFFER, avsWarpBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, avsWarpVertices.subarray(0, vertexCount * 5), gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(avsWarpLocations.position);
+        gl.vertexAttribPointer(avsWarpLocations.position, 2, gl.FLOAT, false, 20, 0);
+        gl.enableVertexAttribArray(avsWarpLocations.uv);
+        gl.vertexAttribPointer(avsWarpLocations.uv, 2, gl.FLOAT, false, 20, 8);
+        gl.enableVertexAttribArray(avsWarpLocations.alpha);
+        gl.vertexAttribPointer(avsWarpLocations.alpha, 1, gl.FLOAT, false, 20, 16);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, sourceTarget.texture);
+        gl.uniform1i(avsWarpLocations.source, 0);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, state.front.texture);
+        gl.uniform1i(avsWarpLocations.destination, 1);
+        gl.uniform1f(avsWarpLocations.blend, blendEnabled ? 1 : 0);
+        gl.disable(gl.BLEND);
+        gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.activeTexture(gl.TEXTURE0);
+        swapAvsFramebuffers();
+        bindAvsLineTarget(avsFramebufferState.front);
+    }
+
+    function renderAvsDynamicMovementRenderer(renderer, isBeat) {
+        var state = ensureAvsFramebuffers();
+        if (!state || !prepareAvsFrameProgram(renderer, isBeat)) {
+            return;
+        }
+        var settings = renderer.settings || {};
+        if (settings.noMovement) {
+            bindAvsLineTarget(state.front);
+            return;
+        }
+
+        var bufferNumber = Math.round(settings.bufferNumber || 0);
+        var sourceTarget = bufferNumber > 0
+                ? ensureAvsGlobalBuffer(bufferNumber - 1, false)
+                : state.front;
+        if (!sourceTarget) {
+            bindAvsLineTarget(state.front);
+            return;
+        }
+
+        var xResolution = Math.max(1, Math.min(128, Math.round(settings.xResolution || 16)));
+        var yResolution = Math.max(1, Math.min(128, Math.round(settings.yResolution || 16)));
+        var columns = xResolution + 1;
+        var rows = yResolution + 1;
+        var pointCount = columns * rows;
+        var vertexCount = xResolution * yResolution * 6;
+        ensureAvsWarpCapacity(pointCount, vertexCount);
+
+        var movementOptions = {
+            rectCoords: settings.rectCoords !== 0 && settings.rectCoords !== false,
+            wrap: settings.wrap !== 0 && settings.wrap !== false,
+            subpixel: settings.subpixel !== 0 && settings.subpixel !== false
+        };
+
+        for (var row = 0; row < rows; row++) {
+            for (var column = 0; column < columns; column++) {
+                var mapIndex = (row * columns + column) * 3;
+                if (!writeAvsDynamicMovementMapPoint(renderer, movementOptions, column, row,
+                        columns, rows, isBeat, mapIndex)) {
+                    return;
+                }
+            }
+        }
+
+        var writtenVertices = 0;
+        for (var cellRow = 0; cellRow < yResolution; cellRow++) {
+            for (var cellColumn = 0; cellColumn < xResolution; cellColumn++) {
+                writtenVertices = appendAvsWarpVertex(writtenVertices, cellColumn, cellRow, columns, rows);
+                writtenVertices = appendAvsWarpVertex(writtenVertices, cellColumn + 1, cellRow, columns, rows);
+                writtenVertices = appendAvsWarpVertex(writtenVertices, cellColumn, cellRow + 1, columns, rows);
+                writtenVertices = appendAvsWarpVertex(writtenVertices, cellColumn, cellRow + 1, columns, rows);
+                writtenVertices = appendAvsWarpVertex(writtenVertices, cellColumn + 1, cellRow, columns, rows);
+                writtenVertices = appendAvsWarpVertex(writtenVertices, cellColumn + 1, cellRow + 1, columns, rows);
+            }
+        }
+        drawAvsDynamicMovementMesh(sourceTarget, settings.blend !== 0, writtenVertices);
+    }
+
     function renderAvsRenderStateRenderer(renderer, isBeat) {
         if (!prepareAvsFrameProgram(renderer, isBeat)) {
             return;
@@ -1891,7 +2258,7 @@
             clearAvsRenderTarget(node.scratch);
         }
         blendAvsTextureToTarget(parentFront.texture, node.front, settings.blendInMode || 0,
-                settings.inBlendValue);
+                settings.inBlendValue, node.scratch);
 
         state.front = node.front;
         state.scratch = node.scratch;
@@ -1903,7 +2270,7 @@
         state.front = parentFront;
         state.scratch = parentScratch;
         blendAvsTextureToTarget(node.front.texture, parentFront, settings.blendOutMode || 0,
-                settings.outBlendValue);
+                settings.outBlendValue, parentScratch);
         bindAvsLineTarget(state.front);
     }
 
@@ -2851,6 +3218,14 @@
         return createLinkedProgram(vertexSource, avsCopyFragmentSource);
     }
 
+    function createAvsBlendProgram() {
+        return createLinkedProgram(vertexSource, avsBlendFragmentSource);
+    }
+
+    function createAvsWarpProgram() {
+        return createLinkedProgram(avsWarpVertexSource, avsWarpFragmentSource);
+    }
+
     function createAvsFeedbackProgram() {
         return createLinkedProgram(vertexSource, avsFeedbackFragmentSource);
     }
@@ -3238,11 +3613,27 @@
         lineLocations.color = gl.getAttribLocation(lineProgram, "a_color");
     }
 
+    function initAvsWarpGeometry() {
+        avsWarpBuffer = gl.createBuffer();
+    }
+
     function initAvsPassLocations() {
         avsCopyLocations.position = gl.getAttribLocation(avsCopyProgram, "a_position");
         avsCopyLocations.texture = gl.getUniformLocation(avsCopyProgram, "u_texture");
         avsCopyLocations.opacity = gl.getUniformLocation(avsCopyProgram, "u_opacity");
         avsCopyLocations.gain = gl.getUniformLocation(avsCopyProgram, "u_gain");
+        avsBlendLocations.position = gl.getAttribLocation(avsBlendProgram, "a_position");
+        avsBlendLocations.source = gl.getUniformLocation(avsBlendProgram, "u_source");
+        avsBlendLocations.destination = gl.getUniformLocation(avsBlendProgram, "u_destination");
+        avsBlendLocations.resolution = gl.getUniformLocation(avsBlendProgram, "u_resolution");
+        avsBlendLocations.mode = gl.getUniformLocation(avsBlendProgram, "u_mode");
+        avsBlendLocations.adjust = gl.getUniformLocation(avsBlendProgram, "u_adjust");
+        avsWarpLocations.position = gl.getAttribLocation(avsWarpProgram, "a_position");
+        avsWarpLocations.uv = gl.getAttribLocation(avsWarpProgram, "a_uv");
+        avsWarpLocations.alpha = gl.getAttribLocation(avsWarpProgram, "a_alpha");
+        avsWarpLocations.source = gl.getUniformLocation(avsWarpProgram, "u_source");
+        avsWarpLocations.destination = gl.getUniformLocation(avsWarpProgram, "u_destination");
+        avsWarpLocations.blend = gl.getUniformLocation(avsWarpProgram, "u_blend");
         avsFeedbackLocations.position = gl.getAttribLocation(avsFeedbackProgram, "a_position");
         avsFeedbackLocations.texture = gl.getUniformLocation(avsFeedbackProgram, "u_texture");
         avsFeedbackLocations.resolution = gl.getUniformLocation(avsFeedbackProgram, "u_resolution");
@@ -3284,10 +3675,13 @@
             program = createProgram();
             lineProgram = createLineProgram();
             avsCopyProgram = createAvsCopyProgram();
+            avsBlendProgram = createAvsBlendProgram();
+            avsWarpProgram = createAvsWarpProgram();
             avsFeedbackProgram = createAvsFeedbackProgram();
             gl.useProgram(program);
             initGeometry();
             initLineGeometry();
+            initAvsWarpGeometry();
             initAvsPassLocations();
             initLocations();
             gl.disable(gl.DEPTH_TEST);

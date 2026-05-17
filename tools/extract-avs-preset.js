@@ -26,7 +26,7 @@ const EFFECT_NAMES = new Map([
     [15, "Dot Fountain"],
     [16, "Water Bump"],
     [17, "Buffer Save"],
-    [18, "Buffer Blit"],
+    [18, "Buffer Save"],
     [19, "Movement"],
     [20, "Bump"],
     [21, "Comment"],
@@ -51,7 +51,7 @@ const EFFECT_NAMES = new Map([
     [40, "Line Mode"],
     [41, "Picture"],
     [42, "Comment"],
-    [43, "Render State"],
+    [43, "Dynamic Movement"],
     [44, "Fast Brightness"],
     [45, "Trans / Movement"],
     [46, "Color Modifier"],
@@ -66,7 +66,7 @@ const EFFECT_TYPES = new Map([
     [6, "colorFade"],
     [12, "scatter"],
     [15, "dotFountain"],
-    [18, "bufferBlit"],
+    [18, "bufferSave"],
     [20, "bump"],
     [21, "comment"],
     [25, "clearScreen"],
@@ -76,7 +76,7 @@ const EFFECT_TYPES = new Map([
     [38, "texer2"],
     [40, "lineMode"],
     [42, "comment"],
-    [43, "renderState"],
+    [43, "dynamicMovement"],
     [44, "fastBrightness"]
 ]);
 
@@ -316,6 +316,16 @@ function decodeIntegerConfig(config, names) {
     return values;
 }
 
+function decodeBufferSave(config) {
+    return {
+        direction: readInt32At(config, 0),
+        bufferIndex: readInt32At(config, 4),
+        blendMode: readInt32At(config, 8),
+        adjustableBlend: config.length >= 16 ? readInt32At(config, 12) : 128,
+        ints: previewInts(config)
+    };
+}
+
 function decodeDotFountain(config) {
     const colorRaw = readUInt32At(config, 0);
     const settings = {
@@ -415,6 +425,20 @@ function decodeEelBlockConfig(config) {
     return settings;
 }
 
+function decodeDynamicMovement(config) {
+    const settings = decodeEelBlockConfig(config);
+    const tail = settings.tailInts || [];
+    settings.subpixel = tail.length > 0 ? tail[0] : 1;
+    settings.rectCoords = tail.length > 1 ? tail[1] : 0;
+    settings.xResolution = tail.length > 2 ? tail[2] : 16;
+    settings.yResolution = tail.length > 3 ? tail[3] : 16;
+    settings.blend = tail.length > 4 ? tail[4] : 0;
+    settings.wrap = tail.length > 5 ? tail[5] : 0;
+    settings.bufferNumber = tail.length > 6 ? tail[6] : 0;
+    settings.noMovement = tail.length > 7 ? tail[7] : 0;
+    return settings;
+}
+
 function decodeSuperScope(config) {
     const state = { offset: 0 };
     const marker = config[state.offset++];
@@ -480,7 +504,7 @@ function decodeEffectSettings(effectId, config) {
         return decodeDotFountain(config);
     }
     if (effectId === 18) {
-        return decodeIntegerConfig(config, ["sourceBuffer", "destinationBuffer", "mode"]);
+        return decodeBufferSave(config);
     }
     if (effectId === 20) {
         return decodeIntegerConfig(config, ["enabled", "onBeat", "durationFrames", "depth", "beatDepth", "blend", "blendAverage"]);
@@ -504,7 +528,7 @@ function decodeEffectSettings(effectId, config) {
         return decodeLineMode(config);
     }
     if (effectId === 43) {
-        return decodeEelBlockConfig(config);
+        return decodeDynamicMovement(config);
     }
     if (effectId === 44) {
         return decodeFastBrightness(config);

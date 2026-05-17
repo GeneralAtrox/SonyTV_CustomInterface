@@ -69,12 +69,12 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
             "sourceOffset": 492
         },
         {
-            "type": "bufferBlit",
+            "type": "bufferSave",
             "sourceEffectId": 18,
             "sourceOffset": 550
         },
         {
-            "type": "bufferBlit",
+            "type": "bufferSave",
             "sourceEffectId": 18,
             "sourceOffset": 570
         },
@@ -89,7 +89,7 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
             "sourceOffset": 1912
         },
         {
-            "type": "renderState",
+            "type": "dynamicMovement",
             "sourceEffectId": 43,
             "sourceOffset": 1954
         },
@@ -396,16 +396,17 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
                     }
                 },
                 {
-                    "type": "bufferBlit",
-                    "name": "Buffer Blit",
+                    "type": "bufferSave",
+                    "name": "Buffer Save",
                     "sourceEffectId": 18,
                     "sourceOffset": 550,
                     "configLength": 12,
                     "opaque": false,
                     "settings": {
-                        "sourceBuffer": 0,
-                        "destinationBuffer": 0,
-                        "mode": 0,
+                        "direction": 0,
+                        "bufferIndex": 0,
+                        "blendMode": 0,
+                        "adjustableBlend": 128,
                         "ints": [
                             0,
                             0,
@@ -414,16 +415,17 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
                     }
                 },
                 {
-                    "type": "bufferBlit",
-                    "name": "Buffer Blit",
+                    "type": "bufferSave",
+                    "name": "Buffer Save",
                     "sourceEffectId": 18,
                     "sourceOffset": 570,
                     "configLength": 12,
                     "opaque": false,
                     "settings": {
-                        "sourceBuffer": 0,
-                        "destinationBuffer": 0,
-                        "mode": 2,
+                        "direction": 0,
+                        "bufferIndex": 0,
+                        "blendMode": 2,
+                        "adjustableBlend": 128,
                         "ints": [
                             0,
                             0,
@@ -487,8 +489,8 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
             }
         },
         {
-            "type": "renderState",
-            "name": "Render State",
+            "type": "dynamicMovement",
+            "name": "Dynamic Movement",
             "sourceEffectId": 43,
             "sourceOffset": 1954,
             "configLength": 989,
@@ -510,7 +512,15 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
                     0,
                     1,
                     0
-                ]
+                ],
+                "subpixel": 1,
+                "rectCoords": 1,
+                "xResolution": 21,
+                "yResolution": 21,
+                "blend": 1,
+                "wrap": 0,
+                "bufferNumber": 1,
+                "noMovement": 0
             }
         },
         {
