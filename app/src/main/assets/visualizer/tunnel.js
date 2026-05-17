@@ -37,7 +37,8 @@
     };
     var waveformSamples = new Float32Array(audioSize);
     var avsNeonState = null;
-    var avsNeonVertices = new Float32Array(480 * 2 * 6);
+    var avsNeonLineWidthPx = 3;
+    var avsNeonVertices = new Float32Array(480 * 6 * 6);
     var avsFadeVertices = new Float32Array([
         -1, -1, 0, 0, 0, 0.50,
         1, -1, 0, 0, 0, 0.50,
@@ -939,6 +940,40 @@
         ctx.globalAlpha = 1;
     }
 
+    function writeAvsNeonVertex(offset, x, y, r, g, b, a) {
+        avsNeonVertices[offset] = x;
+        avsNeonVertices[offset + 1] = y;
+        avsNeonVertices[offset + 2] = r;
+        avsNeonVertices[offset + 3] = g;
+        avsNeonVertices[offset + 4] = b;
+        avsNeonVertices[offset + 5] = a;
+    }
+
+    function addAvsNeonSegment(vertexCount, start, end) {
+        var x1 = start.x;
+        var y1 = -start.y;
+        var x2 = end.x;
+        var y2 = -end.y;
+        var dxPx = (x2 - x1) * canvas.width * 0.5;
+        var dyPx = (y2 - y1) * canvas.height * 0.5;
+        var lengthPx = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
+        if (lengthPx < 0.001) {
+            return vertexCount;
+        }
+
+        var halfWidthPx = avsNeonLineWidthPx * 0.5;
+        var normalX = (-dyPx / lengthPx) * halfWidthPx * 2 / canvas.width;
+        var normalY = (dxPx / lengthPx) * halfWidthPx * 2 / canvas.height;
+        var offset = vertexCount * 6;
+        writeAvsNeonVertex(offset, x1 + normalX, y1 + normalY, start.r, start.g, start.b, start.a);
+        writeAvsNeonVertex(offset + 6, x2 + normalX, y2 + normalY, end.r, end.g, end.b, end.a);
+        writeAvsNeonVertex(offset + 12, x1 - normalX, y1 - normalY, start.r, start.g, start.b, start.a);
+        writeAvsNeonVertex(offset + 18, x1 - normalX, y1 - normalY, start.r, start.g, start.b, start.a);
+        writeAvsNeonVertex(offset + 24, x2 + normalX, y2 + normalY, end.r, end.g, end.b, end.a);
+        writeAvsNeonVertex(offset + 30, x2 - normalX, y2 - normalY, end.r, end.g, end.b, end.a);
+        return vertexCount + 6;
+    }
+
     function renderNeonCoaster(now) {
         if (!lineProgram || !lineBuffer) {
             return;
@@ -953,21 +988,14 @@
             if (previous && previous.a > 0 && alpha > 0) {
                 var distance = Math.abs(previous.x - vertex.x) + Math.abs(previous.y - vertex.y);
                 if (distance < 1.4) {
-                    var offset = vertexCount * 6;
-                    avsNeonVertices[offset] = previous.x;
-                    avsNeonVertices[offset + 1] = -previous.y;
-                    avsNeonVertices[offset + 2] = previous.r;
-                    avsNeonVertices[offset + 3] = previous.g;
-                    avsNeonVertices[offset + 4] = previous.b;
-                    avsNeonVertices[offset + 5] = previous.a;
-                    offset += 6;
-                    avsNeonVertices[offset] = vertex.x;
-                    avsNeonVertices[offset + 1] = -vertex.y;
-                    avsNeonVertices[offset + 2] = vertex.r;
-                    avsNeonVertices[offset + 3] = vertex.g;
-                    avsNeonVertices[offset + 4] = vertex.b;
-                    avsNeonVertices[offset + 5] = alpha;
-                    vertexCount += 2;
+                    vertexCount = addAvsNeonSegment(vertexCount, previous, {
+                        x: vertex.x,
+                        y: vertex.y,
+                        r: vertex.r,
+                        g: vertex.g,
+                        b: vertex.b,
+                        a: alpha
+                    });
                 }
             }
             previous = {
@@ -1005,8 +1033,7 @@
         gl.enable(gl.BLEND);
         gl.blendEquation(gl.MAX);
         gl.blendFunc(gl.ONE, gl.ONE);
-        gl.lineWidth(3);
-        gl.drawArrays(gl.LINES, 0, vertexCount);
+        gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
         gl.blendEquation(gl.FUNC_ADD);
         gl.disable(gl.BLEND);
     }
