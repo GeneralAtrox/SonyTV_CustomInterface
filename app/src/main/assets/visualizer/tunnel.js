@@ -10,6 +10,8 @@
     var avsEel = window.braviaAvsEel || null;
     var avsNeonRuntime = null;
     var avsNeonEelScope = null;
+    var avsNeonSlots = null;
+    var avsNeonFastSlotsReady = false;
     var avsNeonRuntimeFailed = false;
     var gl = null;
     var program = null;
@@ -58,8 +60,9 @@
     var avsNeonBlendMode = neonCoasterDefinition && neonCoasterDefinition.lineMode
             ? neonCoasterDefinition.lineMode.blendMode
             : "maximum";
-    // The BRAVIA WebView cannot interpret all 480 SuperScope points at 60 FPS yet.
-    var avsNeonInterpretedSampleCap = 360;
+    var avsNeonHost = null;
+    var avsNeonPointScratch = new Float32Array(6);
+    var avsNeonPreviousScratch = new Float32Array(6);
     var avsNeonVertices = new Float32Array(avsNeonSampleCount * 6 * 6);
     var avsFadeVertices = new Float32Array([
         -1, -1, 0, 0, 0, avsFastBrightnessFadeAlpha,
@@ -566,11 +569,88 @@
     }
 
     function avsEelHost() {
-        return {
-            getosc: function (position) {
-                return getOsc(position);
-            }
-        };
+        if (!avsNeonHost) {
+            avsNeonHost = {
+                waveformSamples: waveformSamples,
+                rms: audio.rms,
+                visualTimeSeconds: visualTimeSeconds,
+                getosc: function (position) {
+                    return getOsc(position);
+                }
+            };
+        }
+        avsNeonHost.waveformSamples = waveformSamples;
+        avsNeonHost.rms = audio.rms;
+        avsNeonHost.visualTimeSeconds = visualTimeSeconds;
+        return avsNeonHost;
+    }
+
+    function getAvsRuntimeSlots(runtime) {
+        if (!avsNeonSlots && runtime && typeof runtime.slots === "function") {
+            avsNeonSlots = runtime.slots(["n", "w", "h", "i", "x", "y", "red", "green", "blue"]);
+            avsNeonFastSlotsReady = avsNeonSlots.n >= 0
+                    && avsNeonSlots.w >= 0
+                    && avsNeonSlots.h >= 0
+                    && avsNeonSlots.i >= 0
+                    && avsNeonSlots.x >= 0
+                    && avsNeonSlots.y >= 0
+                    && avsNeonSlots.red >= 0
+                    && avsNeonSlots.green >= 0
+                    && avsNeonSlots.blue >= 0;
+        }
+        return avsNeonSlots;
+    }
+
+    function runtimeGet(runtime, scope, name) {
+        var slots = getAvsRuntimeSlots(runtime);
+        return slots && typeof runtime.getSlot === "function"
+                ? runtime.getSlot(scope, slots[name])
+                : runtime.get(scope, name);
+    }
+
+    function runtimeSet(runtime, scope, name, value) {
+        var slots = getAvsRuntimeSlots(runtime);
+        if (slots && typeof runtime.setSlot === "function") {
+            runtime.setSlot(scope, slots[name], value);
+        } else {
+            runtime.set(scope, name, value);
+        }
+    }
+
+    function readAvsRuntimePoint(runtime, scope, out) {
+        var slots = getAvsRuntimeSlots(runtime);
+        if (slots && typeof runtime.getSlot === "function") {
+            out[0] = runtime.getSlot(scope, slots.x) || 0;
+            out[1] = runtime.getSlot(scope, slots.y) || 0;
+            out[2] = clamp(runtime.getSlot(scope, slots.red) || 0, 0, 1);
+            out[3] = clamp(runtime.getSlot(scope, slots.green) || 0, 0, 1);
+            out[4] = clamp(runtime.getSlot(scope, slots.blue) || 0, 0, 1);
+            return out;
+        }
+        out[0] = runtime.get(scope, "x") || 0;
+        out[1] = runtime.get(scope, "y") || 0;
+        out[2] = clamp(runtime.get(scope, "red") || 0, 0, 1);
+        out[3] = clamp(runtime.get(scope, "green") || 0, 0, 1);
+        out[4] = clamp(runtime.get(scope, "blue") || 0, 0, 1);
+        return out;
+    }
+
+    function fallbackStatePoint(out) {
+        out[0] = avsNeonState.x || 0;
+        out[1] = avsNeonState.y || 0;
+        out[2] = clamp(avsNeonState.red || 0, 0, 1);
+        out[3] = clamp(avsNeonState.green || 0, 0, 1);
+        out[4] = clamp(avsNeonState.blue || 0, 0, 1);
+        return out;
+    }
+
+    function copyAvsPoint(source, target) {
+        target[0] = source[0];
+        target[1] = source[1];
+        target[2] = source[2];
+        target[3] = source[3];
+        target[4] = source[4];
+        target[5] = source[5];
     }
 
     function runAvsEelProgram(program, scope) {
@@ -583,6 +663,8 @@
         } catch (exception) {
             avsNeonRuntimeFailed = true;
             avsNeonRuntime = null;
+            avsNeonSlots = null;
+            avsNeonFastSlotsReady = false;
             if (window.console && typeof window.console.error === "function") {
                 window.console.error("AVS EEL runtime failed", exception);
             }
@@ -597,11 +679,12 @@
         }
         if (typeof runtime.createScope === "function") {
             avsNeonEelScope = runtime.createScope(avsNeonState);
+            getAvsRuntimeSlots(runtime);
             if (!runAvsEelProgram(runtime.init, avsNeonEelScope)) {
                 avsNeonEelScope = null;
                 return false;
             }
-            avsNeonState.n = runtime.get(avsNeonEelScope, "n") || avsNeonState.n;
+            avsNeonState.n = runtimeGet(runtime, avsNeonEelScope, "n") || avsNeonState.n;
             return true;
         }
         return runAvsEelProgram(runtime.init, avsNeonState);
@@ -614,8 +697,8 @@
         }
         var scope = avsNeonEelScope || avsNeonState;
         if (typeof runtime.set === "function") {
-            runtime.set(scope, "w", width);
-            runtime.set(scope, "h", Math.max(1, height));
+            runtimeSet(runtime, scope, "w", width);
+            runtimeSet(runtime, scope, "h", Math.max(1, height));
         } else {
             avsNeonState.w = width;
             avsNeonState.h = Math.max(1, height);
@@ -627,12 +710,12 @@
             runAvsEelProgram(runtime.beat, scope);
         }
         if (typeof runtime.get === "function") {
-            avsNeonState.n = runtime.get(scope, "n") || avsNeonState.n;
+            avsNeonState.n = runtimeGet(runtime, scope, "n") || avsNeonState.n;
         }
         return true;
     }
 
-    function runAvsNeonPointProgram(pointIndex, renderedSampleCount) {
+    function runAvsNeonPointProgram(pointIndex, renderedSampleCount, out) {
         var runtime = getAvsNeonRuntime();
         if (!runtime) {
             return null;
@@ -640,7 +723,7 @@
         var scope = avsNeonEelScope || avsNeonState;
         var sampleCount = renderedSampleCount || avsNeonState.n;
         if (typeof runtime.set === "function") {
-            runtime.set(scope, "i", pointIndex / Math.max(1, sampleCount - 1));
+            runtimeSet(runtime, scope, "i", pointIndex / Math.max(1, sampleCount - 1));
         } else {
             avsNeonState.i = pointIndex / Math.max(1, sampleCount - 1);
         }
@@ -648,21 +731,9 @@
             return null;
         }
         if (typeof runtime.get === "function") {
-            return {
-                x: runtime.get(scope, "x") || 0,
-                y: runtime.get(scope, "y") || 0,
-                r: clamp(runtime.get(scope, "red") || 0, 0, 1),
-                g: clamp(runtime.get(scope, "green") || 0, 0, 1),
-                b: clamp(runtime.get(scope, "blue") || 0, 0, 1)
-            };
+            return readAvsRuntimePoint(runtime, scope, out);
         }
-        return {
-            x: avsNeonState.x || 0,
-            y: avsNeonState.y || 0,
-            r: clamp(avsNeonState.red || 0, 0, 1),
-            g: clamp(avsNeonState.green || 0, 0, 1),
-            b: clamp(avsNeonState.blue || 0, 0, 1)
-        };
+        return fallbackStatePoint(out);
     }
 
     function resetAvsNeonState() {
@@ -774,8 +845,8 @@
         }
     }
 
-    function avsNeonPoint(pointIndex, renderedSampleCount) {
-        var runtimePoint = runAvsNeonPointProgram(pointIndex, renderedSampleCount);
+    function avsNeonPoint(pointIndex, renderedSampleCount, out) {
+        var runtimePoint = runAvsNeonPointProgram(pointIndex, renderedSampleCount, out);
         if (runtimePoint) {
             return runtimePoint;
         }
@@ -924,13 +995,12 @@
                 * eelBelow(s.my, 2) * eelBelow(s.ly, 2);
         u1 = 1.1 - z2 * (0.9 + pc * 0.2) + pc * 0.3;
         u2 = Math.max(0, Math.sin(i * 0.114 * 200)) * 0.2 + Math.abs(getOsc(i * 0.03) * pc) * 2;
-        return {
-            x: x,
-            y: y,
-            r: clamp(bx * (u1 * s.cr + u2), 0, 1),
-            g: clamp(bx * (u1 * s.cg + u2), 0, 1),
-            b: clamp(bx * (u1 * s.cb + u2), 0, 1)
-        };
+        out[0] = x;
+        out[1] = y;
+        out[2] = clamp(bx * (u1 * s.cr + u2), 0, 1);
+        out[3] = clamp(bx * (u1 * s.cg + u2), 0, 1);
+        out[4] = clamp(bx * (u1 * s.cb + u2), 0, 1);
+        return out;
     }
 
     function catmullRom(a, b, c, d, amount) {
@@ -1120,22 +1190,22 @@
         return 1 - (y * 2 / Math.max(1, canvas.height));
     }
 
-    function addAvsLineQuad(vertexCount, x1, y1, x2, y2, x3, y3, x4, y4, color) {
+    function addAvsLineQuad(vertexCount, x1, y1, x2, y2, x3, y3, x4, y4, r, g, b, a) {
         var offset = vertexCount * 6;
-        writeAvsNeonVertex(offset, avsPixelToClipX(x1), avsPixelToClipY(y1), color.r, color.g, color.b, color.a);
-        writeAvsNeonVertex(offset + 6, avsPixelToClipX(x2), avsPixelToClipY(y2), color.r, color.g, color.b, color.a);
-        writeAvsNeonVertex(offset + 12, avsPixelToClipX(x3), avsPixelToClipY(y3), color.r, color.g, color.b, color.a);
-        writeAvsNeonVertex(offset + 18, avsPixelToClipX(x3), avsPixelToClipY(y3), color.r, color.g, color.b, color.a);
-        writeAvsNeonVertex(offset + 24, avsPixelToClipX(x2), avsPixelToClipY(y2), color.r, color.g, color.b, color.a);
-        writeAvsNeonVertex(offset + 30, avsPixelToClipX(x4), avsPixelToClipY(y4), color.r, color.g, color.b, color.a);
+        writeAvsNeonVertex(offset, avsPixelToClipX(x1), avsPixelToClipY(y1), r, g, b, a);
+        writeAvsNeonVertex(offset + 6, avsPixelToClipX(x2), avsPixelToClipY(y2), r, g, b, a);
+        writeAvsNeonVertex(offset + 12, avsPixelToClipX(x3), avsPixelToClipY(y3), r, g, b, a);
+        writeAvsNeonVertex(offset + 18, avsPixelToClipX(x3), avsPixelToClipY(y3), r, g, b, a);
+        writeAvsNeonVertex(offset + 24, avsPixelToClipX(x2), avsPixelToClipY(y2), r, g, b, a);
+        writeAvsNeonVertex(offset + 30, avsPixelToClipX(x4), avsPixelToClipY(y4), r, g, b, a);
         return vertexCount + 6;
     }
 
     function addAvsNeonSegment(vertexCount, start, end) {
-        var x1 = Math.trunc((start.x + 1) * canvas.width * 0.5);
-        var y1 = Math.trunc((start.y + 1) * canvas.height * 0.5);
-        var x2 = Math.trunc((end.x + 1) * canvas.width * 0.5);
-        var y2 = Math.trunc((end.y + 1) * canvas.height * 0.5);
+        var x1 = Math.trunc((start[0] + 1) * canvas.width * 0.5);
+        var y1 = Math.trunc((start[1] + 1) * canvas.height * 0.5);
+        var x2 = Math.trunc((end[0] + 1) * canvas.width * 0.5);
+        var y2 = Math.trunc((end[1] + 1) * canvas.height * 0.5);
         var dx = Math.abs(x2 - x1);
         var dy = Math.abs(y2 - y1);
         if (!dx && !dy) {
@@ -1143,26 +1213,24 @@
         }
 
         var lw2 = Math.floor(avsNeonLineWidthPx / 2);
-        var color = {
-            r: end.r,
-            g: end.g,
-            b: end.b,
-            a: end.a
-        };
+        var r = end[2];
+        var g = end[3];
+        var b = end[4];
+        var a = end[5];
         if (!dx) {
             return addAvsLineQuad(vertexCount, x1 - lw2, y1, x1 - lw2 + avsNeonLineWidthPx, y1,
-                    x2 - lw2, y2, x2 - lw2 + avsNeonLineWidthPx, y2, color);
+                    x2 - lw2, y2, x2 - lw2 + avsNeonLineWidthPx, y2, r, g, b, a);
         }
         if (!dy) {
             return addAvsLineQuad(vertexCount, x1, y1 - lw2, x2, y2 - lw2,
-                    x1, y1 - lw2 + avsNeonLineWidthPx, x2, y2 - lw2 + avsNeonLineWidthPx, color);
+                    x1, y1 - lw2 + avsNeonLineWidthPx, x2, y2 - lw2 + avsNeonLineWidthPx, r, g, b, a);
         }
         if (dy <= dx) {
             return addAvsLineQuad(vertexCount, x1, y1 - lw2, x2, y2 - lw2,
-                    x1, y1 - lw2 + avsNeonLineWidthPx, x2, y2 - lw2 + avsNeonLineWidthPx, color);
+                    x1, y1 - lw2 + avsNeonLineWidthPx, x2, y2 - lw2 + avsNeonLineWidthPx, r, g, b, a);
         }
         return addAvsLineQuad(vertexCount, x1 - lw2, y1, x2 - lw2, y2,
-                x1 - lw2 + avsNeonLineWidthPx, y1, x2 - lw2 + avsNeonLineWidthPx, y2, color);
+                x1 - lw2 + avsNeonLineWidthPx, y1, x2 - lw2 + avsNeonLineWidthPx, y2, r, g, b, a);
     }
 
     function renderNeonCoaster(now) {
@@ -1170,35 +1238,51 @@
             return;
         }
         updateAvsNeonFrame(now, canvas.width, canvas.height);
-        var count = avsNeonEelScope
-                ? Math.min(avsNeonState.n, avsNeonInterpretedSampleCap)
-                : avsNeonState.n;
+        var count = avsNeonState.n;
+        var runtime = avsNeonRuntime;
+        var scope = avsNeonEelScope;
+        var slots = avsNeonSlots;
+        var values = scope && scope.values && slots && avsNeonFastSlotsReady ? scope.values : null;
+        var pointProgram = runtime && runtime.point;
+        var host = values && pointProgram ? avsEelHost() : null;
+        var step = 1 / Math.max(1, count - 1);
         var vertexCount = 0;
-        var previous = null;
-        for (var i = 0; i < count; i++) {
-            var vertex = avsNeonPoint(i, count);
-            var alpha = Math.max(vertex.r, vertex.g, vertex.b) > 0 ? 0.96 : 0;
-            if (previous && previous.a > 0 && alpha > 0) {
-                var distance = Math.abs(previous.x - vertex.x) + Math.abs(previous.y - vertex.y);
-                if (distance < 1.4) {
-                    vertexCount = addAvsNeonSegment(vertexCount, previous, {
-                        x: vertex.x,
-                        y: vertex.y,
-                        r: vertex.r,
-                        g: vertex.g,
-                        b: vertex.b,
-                        a: alpha
-                    });
+        var hasPrevious = false;
+        try {
+            for (var i = 0; i < count; i++) {
+                if (values && pointProgram) {
+                    values[slots.i] = i * step;
+                    pointProgram.run(scope, host);
+                    avsNeonPointScratch[0] = values[slots.x] || 0;
+                    avsNeonPointScratch[1] = values[slots.y] || 0;
+                    avsNeonPointScratch[2] = clamp(values[slots.red] || 0, 0, 1);
+                    avsNeonPointScratch[3] = clamp(values[slots.green] || 0, 0, 1);
+                    avsNeonPointScratch[4] = clamp(values[slots.blue] || 0, 0, 1);
+                } else {
+                    avsNeonPoint(i, count, avsNeonPointScratch);
                 }
+                var alpha = Math.max(avsNeonPointScratch[2], avsNeonPointScratch[3], avsNeonPointScratch[4]) > 0 ? 0.96 : 0;
+                avsNeonPointScratch[5] = alpha;
+                if (hasPrevious && avsNeonPreviousScratch[5] > 0 && alpha > 0) {
+                    var distance = Math.abs(avsNeonPreviousScratch[0] - avsNeonPointScratch[0])
+                            + Math.abs(avsNeonPreviousScratch[1] - avsNeonPointScratch[1]);
+                    if (distance < 1.4) {
+                        vertexCount = addAvsNeonSegment(vertexCount, avsNeonPreviousScratch, avsNeonPointScratch);
+                    }
+                }
+                copyAvsPoint(avsNeonPointScratch, avsNeonPreviousScratch);
+                hasPrevious = true;
             }
-            previous = {
-                x: vertex.x,
-                y: vertex.y,
-                r: vertex.r,
-                g: vertex.g,
-                b: vertex.b,
-                a: alpha
-            };
+        } catch (exception) {
+            avsNeonRuntimeFailed = true;
+            avsNeonRuntime = null;
+            avsNeonSlots = null;
+            avsNeonFastSlotsReady = false;
+            if (window.console && typeof window.console.error === "function") {
+                window.console.error("AVS EEL point runtime failed", exception);
+            }
+            renderProceduralTunnel(now);
+            return;
         }
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);

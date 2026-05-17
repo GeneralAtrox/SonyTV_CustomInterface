@@ -768,90 +768,145 @@
     function runSlotBytecode(ops, stack, values, host) {
         var sp = 0;
         for (var ip = 0; ip < ops.length;) {
-            var op = ops[ip++];
-            if (op === OP_CONST) {
-                stack[sp++] = ops[ip++];
-            } else if (op === OP_GET) {
-                stack[sp++] = values[ops[ip++]];
-            } else if (op === OP_SET) {
-                values[ops[ip++]] = finite(stack[--sp]);
-            } else if (op === OP_POP) {
-                sp--;
-            } else if (op === OP_NEG) {
-                stack[sp - 1] = -stack[sp - 1];
-            } else if (op === OP_ADD) {
-                stack[sp - 2] = stack[sp - 2] + stack[sp - 1];
-                sp--;
-            } else if (op === OP_SUB) {
-                stack[sp - 2] = stack[sp - 2] - stack[sp - 1];
-                sp--;
-            } else if (op === OP_MUL) {
-                stack[sp - 2] = stack[sp - 2] * stack[sp - 1];
-                sp--;
-            } else if (op === OP_DIV) {
-                stack[sp - 2] = Math.abs(stack[sp - 1]) < 0.00001 ? 0 : finite(stack[sp - 2] / stack[sp - 1]);
-                sp--;
-            } else if (op === OP_MOD) {
-                stack[sp - 2] = finite(positiveModulo(stack[sp - 2], stack[sp - 1]));
-                sp--;
-            } else if (op === OP_CALL) {
-                var id = ops[ip++];
-                var count = ops[ip++];
-                var start = sp - count;
-                var result = callBuiltinId(id, stack, start, count, host);
-                sp = start;
-                stack[sp++] = result;
-            } else if (op === OP_JUMP) {
-                ip = ops[ip];
-            } else if (op === OP_JUMP_IF_FALSE) {
-                var target = ops[ip++];
-                if (!truthy(stack[--sp])) {
-                    ip = target;
-                }
-            } else if (op === OP_SIN) {
-                stack[sp - 1] = Math.sin(stack[sp - 1] || 0);
-            } else if (op === OP_COS) {
-                stack[sp - 1] = Math.cos(stack[sp - 1] || 0);
-            } else if (op === OP_ACOS) {
-                stack[sp - 1] = Math.acos(Math.max(-1, Math.min(1, stack[sp - 1] || 0)));
-            } else if (op === OP_ATAN2) {
-                stack[sp - 2] = Math.atan2(stack[sp - 2] || 0, stack[sp - 1] || 0);
-                sp--;
-            } else if (op === OP_SQRT) {
-                stack[sp - 1] = Math.sqrt(Math.max(0, stack[sp - 1] || 0));
-            } else if (op === OP_SQR) {
-                stack[sp - 1] = stack[sp - 1] * stack[sp - 1];
-            } else if (op === OP_ABS) {
-                stack[sp - 1] = Math.abs(stack[sp - 1] || 0);
-            } else if (op === OP_MIN2) {
-                stack[sp - 2] = Math.min(stack[sp - 2], stack[sp - 1]);
-                sp--;
-            } else if (op === OP_MAX2) {
-                stack[sp - 2] = Math.max(stack[sp - 2], stack[sp - 1]);
-                sp--;
-            } else if (op === OP_SIGN) {
-                stack[sp - 1] = stack[sp - 1] > 0 ? 1 : (stack[sp - 1] < 0 ? -1 : 0);
-            } else if (op === OP_ABOVE) {
-                stack[sp - 2] = stack[sp - 2] > stack[sp - 1] ? 1 : 0;
-                sp--;
-            } else if (op === OP_BELOW) {
-                stack[sp - 2] = stack[sp - 2] < stack[sp - 1] ? 1 : 0;
-                sp--;
-            } else if (op === OP_BAND) {
-                stack[sp - 2] = truthy(stack[sp - 2]) && truthy(stack[sp - 1]) ? 1 : 0;
-                sp--;
-            } else if (op === OP_BOR) {
-                stack[sp - 2] = truthy(stack[sp - 2]) || truthy(stack[sp - 1]) ? 1 : 0;
-                sp--;
-            } else if (op === OP_EQUAL) {
-                stack[sp - 2] = Math.abs((stack[sp - 2] || 0) - (stack[sp - 1] || 0)) < 0.00001 ? 1 : 0;
-                sp--;
-            } else if (op === OP_GETOSC1) {
-                stack[sp - 1] = host && typeof host.getosc === "function"
-                        ? finite(host.getosc(stack[sp - 1] || 0, 0, 0))
-                        : 0;
+            switch (ops[ip++]) {
+                case OP_CONST:
+                    stack[sp++] = ops[ip++];
+                    break;
+                case OP_GET:
+                    stack[sp++] = values[ops[ip++]];
+                    break;
+                case OP_SET:
+                    values[ops[ip++]] = stack[--sp];
+                    break;
+                case OP_POP:
+                    sp--;
+                    break;
+                case OP_NEG:
+                    stack[sp - 1] = -stack[sp - 1];
+                    break;
+                case OP_ADD:
+                    stack[sp - 2] = stack[sp - 2] + stack[sp - 1];
+                    sp--;
+                    break;
+                case OP_SUB:
+                    stack[sp - 2] = stack[sp - 2] - stack[sp - 1];
+                    sp--;
+                    break;
+                case OP_MUL:
+                    stack[sp - 2] = stack[sp - 2] * stack[sp - 1];
+                    sp--;
+                    break;
+                case OP_DIV:
+                    stack[sp - 2] = Math.abs(stack[sp - 1]) < 0.00001 ? 0 : stack[sp - 2] / stack[sp - 1];
+                    sp--;
+                    break;
+                case OP_MOD:
+                    var divisor = stack[sp - 1];
+                    stack[sp - 2] = Math.abs(divisor) < 0.00001
+                            ? 0
+                            : ((stack[sp - 2] % divisor) + divisor) % divisor;
+                    sp--;
+                    break;
+                case OP_CALL:
+                    var id = ops[ip++];
+                    var count = ops[ip++];
+                    var start = sp - count;
+                    var result = callBuiltinId(id, stack, start, count, host);
+                    sp = start;
+                    stack[sp++] = result;
+                    break;
+                case OP_JUMP:
+                    ip = ops[ip];
+                    break;
+                case OP_JUMP_IF_FALSE:
+                    var target = ops[ip++];
+                    var condition = stack[--sp];
+                    if (!(condition > 0.00001 || condition < -0.00001)) {
+                        ip = target;
+                    }
+                    break;
+                case OP_SIN:
+                    stack[sp - 1] = Math.sin(stack[sp - 1] || 0);
+                    break;
+                case OP_COS:
+                    stack[sp - 1] = Math.cos(stack[sp - 1] || 0);
+                    break;
+                case OP_ACOS:
+                    stack[sp - 1] = Math.acos(Math.max(-1, Math.min(1, stack[sp - 1] || 0)));
+                    break;
+                case OP_ATAN2:
+                    stack[sp - 2] = Math.atan2(stack[sp - 2] || 0, stack[sp - 1] || 0);
+                    sp--;
+                    break;
+                case OP_SQRT:
+                    stack[sp - 1] = Math.sqrt(Math.max(0, stack[sp - 1] || 0));
+                    break;
+                case OP_SQR:
+                    stack[sp - 1] = stack[sp - 1] * stack[sp - 1];
+                    break;
+                case OP_ABS:
+                    stack[sp - 1] = Math.abs(stack[sp - 1] || 0);
+                    break;
+                case OP_MIN2:
+                    stack[sp - 2] = Math.min(stack[sp - 2], stack[sp - 1]);
+                    sp--;
+                    break;
+                case OP_MAX2:
+                    stack[sp - 2] = Math.max(stack[sp - 2], stack[sp - 1]);
+                    sp--;
+                    break;
+                case OP_SIGN:
+                    stack[sp - 1] = stack[sp - 1] > 0 ? 1 : (stack[sp - 1] < 0 ? -1 : 0);
+                    break;
+                case OP_ABOVE:
+                    stack[sp - 2] = stack[sp - 2] > stack[sp - 1] ? 1 : 0;
+                    sp--;
+                    break;
+                case OP_BELOW:
+                    stack[sp - 2] = stack[sp - 2] < stack[sp - 1] ? 1 : 0;
+                    sp--;
+                    break;
+                case OP_BAND:
+                    var bandLeft = stack[sp - 2];
+                    var bandRight = stack[sp - 1];
+                    stack[sp - 2] = (bandLeft > 0.00001 || bandLeft < -0.00001)
+                            && (bandRight > 0.00001 || bandRight < -0.00001) ? 1 : 0;
+                    sp--;
+                    break;
+                case OP_BOR:
+                    var borLeft = stack[sp - 2];
+                    var borRight = stack[sp - 1];
+                    stack[sp - 2] = (borLeft > 0.00001 || borLeft < -0.00001)
+                            || (borRight > 0.00001 || borRight < -0.00001) ? 1 : 0;
+                    sp--;
+                    break;
+                case OP_EQUAL:
+                    stack[sp - 2] = Math.abs((stack[sp - 2] || 0) - (stack[sp - 1] || 0)) < 0.00001 ? 1 : 0;
+                    sp--;
+                    break;
+                case OP_GETOSC1:
+                    stack[sp - 1] = readOsc(host, stack[sp - 1] || 0);
+                    break;
             }
         }
+    }
+
+    function readOsc(host, position) {
+        if (!host) {
+            return 0;
+        }
+        var samplePosition = position - Math.floor(position);
+        var waveform = host.waveformSamples;
+        var rms = host.rms || 0;
+        if (!waveform || !waveform.length) {
+            return Math.sin((host.visualTimeSeconds || 0) * 2.4 + samplePosition * Math.PI * 2) * rms;
+        }
+        var index = Math.max(0, Math.min(waveform.length - 1, Math.round(samplePosition * (waveform.length - 1))));
+        var sample = waveform[index];
+        if (Math.abs(sample) < 0.0001 && rms > 0.02) {
+            return Math.sin((host.visualTimeSeconds || 0) * 2.4 + samplePosition * Math.PI * 2) * rms;
+        }
+        return sample || 0;
     }
 
     function compileSlotProgram(source, variableIndex) {
@@ -860,12 +915,13 @@
         for (var index = 0; index < body.length; index++) {
             compileStatementSlots(body[index], ops, variableIndex);
         }
-        var stack = [];
+        var bytecode = new Float64Array(ops);
+        var stack = new Float64Array(512);
         return {
             statementCount: body.length,
-            opCount: ops.length,
+            opCount: bytecode.length,
             run: function (scope, host) {
-                runSlotBytecode(ops, stack, scope.values, host);
+                runSlotBytecode(bytecode, stack, scope.values, host);
                 return scope;
             }
         };
@@ -896,11 +952,29 @@
                         ? scope.values[variableMap[key]]
                         : 0;
             },
+            getSlot: function (scope, slot) {
+                return slot >= 0 ? scope.values[slot] : 0;
+            },
             set: function (scope, name, value) {
                 var key = name.toLowerCase();
                 if (Object.prototype.hasOwnProperty.call(variableMap, key)) {
                     scope.values[variableMap[key]] = finite(Number(value));
                 }
+            },
+            setSlot: function (scope, slot, value) {
+                if (slot >= 0) {
+                    scope.values[slot] = finite(Number(value));
+                }
+            },
+            slots: function (names) {
+                var slots = {};
+                for (var index = 0; index < names.length; index++) {
+                    var key = names[index].toLowerCase();
+                    slots[names[index]] = Object.prototype.hasOwnProperty.call(variableMap, key)
+                            ? variableMap[key]
+                            : -1;
+                }
+                return slots;
             },
             variableCount: function () {
                 return variableNames.length;
@@ -915,7 +989,7 @@
         for (var index = 0; index < body.length; index++) {
             compileStatement(body[index], ops);
         }
-        var stack = [];
+        var stack = new Float64Array(512);
         return {
             statementCount: body.length,
             opCount: ops.length,
