@@ -7,6 +7,11 @@
     var presetName = document.getElementById("presetName");
     var gl = null;
     var program = null;
+    var quadBuffer = null;
+    var quadPositionLocation = -1;
+    var lineProgram = null;
+    var lineBuffer = null;
+    var lineLocations = {};
     var running = false;
     var paused = false;
     var lastFrameAt = 0;
@@ -30,6 +35,10 @@
         targetMid: 0.10,
         targetTreb: 0.10
     };
+    var waveformSamples = new Float32Array(audioSize);
+    var avsNeonState = null;
+    var avsNeonVertices = new Float32Array(480 * 2 * 6);
+    var avsNeonFrameStarted = false;
 
     var presets = [
         {
@@ -337,6 +346,23 @@
         + "    outColor = vec4(pow(max(color, vec3(0.0)), vec3(0.92)), 1.0);\n"
         + "}\n";
 
+    var lineVertexSource = "#version 300 es\n"
+        + "in vec2 a_position;\n"
+        + "in vec4 a_color;\n"
+        + "out vec4 v_color;\n"
+        + "void main() {\n"
+        + "    v_color = a_color;\n"
+        + "    gl_Position = vec4(a_position, 0.0, 1.0);\n"
+        + "}\n";
+
+    var lineFragmentSource = "#version 300 es\n"
+        + "precision mediump float;\n"
+        + "in vec4 v_color;\n"
+        + "out vec4 outColor;\n"
+        + "void main() {\n"
+        + "    outColor = v_color;\n"
+        + "}\n";
+
     var locations = {};
 
     function safeBridge(method) {
@@ -368,7 +394,7 @@
     }
 
     function isCoasterPreset() {
-        return presets[presetIndex].mode === "coaster" && coasterContext;
+        return presets[presetIndex].mode === "coaster";
     }
 
     function setCoasterVisible(visible) {
@@ -421,6 +447,297 @@
 
     function wrap01(value) {
         return value - Math.floor(value);
+    }
+
+    function eelTruthy(value) {
+        return Math.abs(value) > 0.00001;
+    }
+
+    function eelIf(condition, trueValue, falseValue) {
+        return eelTruthy(condition) ? trueValue : falseValue;
+    }
+
+    function eelAbove(value, threshold) {
+        return value > threshold ? 1 : 0;
+    }
+
+    function eelBelow(value, threshold) {
+        return value < threshold ? 1 : 0;
+    }
+
+    function eelBand(a, b) {
+        return eelTruthy(a) && eelTruthy(b) ? 1 : 0;
+    }
+
+    function eelBor(a, b) {
+        return eelTruthy(a) || eelTruthy(b) ? 1 : 0;
+    }
+
+    function sqr(value) {
+        return value * value;
+    }
+
+    function sign(value) {
+        return value > 0 ? 1 : (value < 0 ? -1 : 0);
+    }
+
+    function safeSqrt(value) {
+        return Math.sqrt(Math.max(0, value));
+    }
+
+    function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    function getOsc(position) {
+        var samplePosition = wrap01(position);
+        if (!waveformSamples || waveformSamples.length === 0) {
+            return Math.sin(visualTimeSeconds * 2.4 + samplePosition * Math.PI * 2) * audio.rms;
+        }
+        var index = clamp(Math.round(samplePosition * (waveformSamples.length - 1)), 0, waveformSamples.length - 1);
+        var sample = waveformSamples[index];
+        if (Math.abs(sample) < 0.0001 && audio.rms > 0.02) {
+            return Math.sin(visualTimeSeconds * 2.4 + samplePosition * Math.PI * 2) * audio.rms;
+        }
+        return sample;
+    }
+
+    function resetAvsNeonState() {
+        avsNeonState = {
+            n: 480,
+            tpi: Math.acos(-1),
+            t: 0,
+            ox: 0,
+            oy: 0,
+            oz: 0,
+            oox: 0,
+            ooy: 0,
+            ooz: 0,
+            ix: 0,
+            iy: 0,
+            iz: 0,
+            kx: 0,
+            kz: 0,
+            jx: 0,
+            jz: 0,
+            by: 0,
+            rrz: 0,
+            rx: 0,
+            ry: 0,
+            rz: 0,
+            cx: 1,
+            sx: 0,
+            cy: 1,
+            sy: 0,
+            cz: 1,
+            sz: 0,
+            pc: 0,
+            hi: 1,
+            cr: 0.5,
+            cg: 0.5,
+            cb: 0.5,
+            w: 1,
+            hp: 0,
+            lx: 0,
+            ly: 0,
+            gx: 0,
+            gy: 0,
+            mx: 0,
+            my: 2,
+            hu: 0,
+            mf: ((getOsc(0.7) * 200) % 4 + 4) % 4,
+            u: 0
+        };
+        avsNeonFrameStarted = false;
+    }
+
+    function updateAvsNeonFrame(width, height) {
+        if (!avsNeonState) {
+            resetAvsNeonState();
+        }
+        var s = avsNeonState;
+        var red = eelBor(eelBelow(s.u, 5.02), eelAbove(s.u, 9.86));
+        s.rx = Math.atan2(safeSqrt(sqr(s.ooz - s.oz) + sqr(s.oox - s.ox)), s.ooy - s.oy) - 1.57;
+        s.ry = eelIf(red, Math.atan2(s.ooz - s.oz, s.oox - s.ox) - 1.57, -1.57 * sign(s.oox - s.ox));
+        s.rz = s.rrz + (1 - red) * (1.57 + 1.57 * sign(s.oox - s.ox)
+                * eelIf(s.mf % 2, 1, -1) * eelIf(eelBelow(s.mf, 2), 1, -1));
+        s.ox = s.oox;
+        s.oy = s.ooy;
+        s.oz = s.ooz;
+        s.t += (1 / s.n) * eelIf(eelBelow(s.mf, 2), 1, -1);
+        s.t = eelIf(eelBelow(s.t, 0), s.t + 1, eelIf(eelAbove(s.t, 1), s.t - 1, s.t));
+        s.u = s.t * 31.82;
+        s.cx = Math.cos(s.rx);
+        s.sx = Math.sin(s.rx);
+        s.cy = Math.cos(s.ry);
+        s.sy = Math.sin(s.ry);
+        s.cz = Math.cos(s.rz);
+        s.sz = Math.sin(s.rz);
+        s.pc = 0;
+        s.hi = 1;
+        s.cr = Math.sin(s.hu) * 0.5 + 0.5;
+        s.cg = Math.sin(s.hu + 2.09) * 0.5 + 0.5;
+        s.cb = Math.sin(s.hu + 4.18) * 0.5 + 0.5;
+        s.w = width / Math.max(1, height);
+        s.hp = 0;
+        s.mx = 0;
+        s.my = 2;
+        s.hu = s.hu + 0.005 * s.mf + getOsc(0) * 0.016;
+    }
+
+    function avsNeonPoint(pointIndex) {
+        var s = avsNeonState;
+        s.jx = s.kx;
+        s.jz = s.kz;
+        s.kx = s.ix;
+        s.kz = s.iz;
+        s.hi = -s.hi;
+        s.hp = (s.hp + 1) % 3;
+
+        var i = (pointIndex / Math.max(1, s.n - 1)) * 31.82;
+        var u1 = i;
+        var u2 = 0;
+        var pc = 0;
+        var px = i * 0.5;
+        var py = 0.5 - Math.cos(i * 1.25) * 0.5;
+        var pz = 0;
+
+        pc = eelBand(eelAbove(i, 1), eelBelow(i, 4.33));
+        u1 = (i - 1) * s.tpi * 0.3;
+        px = eelIf(pc, Math.sin(u1) * 0.5 + 0.5, px);
+        py = eelIf(pc, 0.5 - Math.cos(i * 1.25) * 0.5, py);
+        pz = eelIf(pc, Math.cos(u1) * 0.5 - 0.5, pz);
+
+        pc = eelBand(eelAbove(i, 4.33), eelBelow(i, 5.02));
+        u1 = i - 4.33;
+        u2 = u1 * 1.33;
+        px = eelIf(pc, -u1 * 0.5 + 0.5, px);
+        py = eelIf(pc, 0.5 - Math.cos(i * 1.25) * 0.5, py);
+        pz = eelIf(pc, -1, pz);
+
+        pc = eelBand(eelAbove(i, 5.02), eelBelow(i, 9.46));
+        u1 = (i - 5.02) * s.tpi * 0.45;
+        px = eelIf(pc, -Math.sin(u1) * 0.4 + 0.155, px);
+        py = eelIf(pc, 0.4 - 0.4 * Math.cos(u1), py);
+        pz = eelIf(pc, -1 + u1 * 0.033, pz);
+
+        pc = eelBand(eelAbove(i, 9.46), eelBelow(i, 10.96));
+        u1 = i - 9.46;
+        u2 = u1 * 0.6;
+        px = eelIf(pc, -u1 * 0.5 + 0.155, px);
+        py = eelIf(pc, 0.3 - Math.cos(u1) * 0.3, py);
+        pz = eelIf(pc, -0.792 - (3 * sqr(u2) - 2 * sqr(u2) * u2) * 0.125, pz);
+
+        pc = eelBand(eelAbove(i, 10.96), eelBelow(i, 13.26));
+        u1 = i - 10.96;
+        u2 = u1 * 0.6;
+        px = eelIf(pc, -Math.sin(u1) * 0.4 - 0.59, px);
+        py = eelIf(pc, 0.3 - Math.cos(u1 + 1.495) * 0.3, py);
+        pz = eelIf(pc, -Math.cos(u1) * 0.4 - 0.514, pz);
+
+        pc = eelBand(eelAbove(i, 13.26), eelBelow(i, 15.19));
+        u1 = i - 13.26;
+        u2 = u1 * 0.6;
+        px = eelIf(pc, u1 * 0.35 - 0.89, px);
+        py = eelIf(pc, 0.4 - Math.cos(u1 + 4.35) * 0.4, py);
+        pz = eelIf(pc, u1 * 0.395 - 0.25, pz);
+
+        pc = eelBand(eelAbove(i, 15.19), eelBelow(i, 19.18));
+        u1 = (i - 15.19) * s.tpi * 0.5 - 0.84;
+        u2 = (i - 15.19) * 0.2506;
+        px = eelIf(pc, Math.cos(u1) * 0.35 - 0.45, px);
+        py = eelIf(pc, (3 * sqr(u2) - 2 * sqr(u2) * u2) * 0.2, py);
+        pz = eelIf(pc, Math.sin(u1) * 0.35 + 0.772, pz);
+
+        pc = eelBand(eelAbove(i, 19.18), eelBelow(i, 25.62));
+        u1 = -(i - 19.18) * s.tpi * 0.23 - 0.84 - 3.14;
+        u2 = i - 19.18;
+        px = eelIf(pc, Math.cos(u1) * 0.6 + 0.186, px);
+        py = eelIf(pc, 0.25 + Math.cos(u2 * 1.94) * 0.15 - (Math.cos((i - 19.18) * 0.487) * 0.1 + 0.1), py);
+        pz = eelIf(pc, Math.sin(u1) * 0.6 + 0.065, pz);
+
+        pc = eelBand(eelAbove(i, 25.62), eelBelow(i, 27.26));
+        u1 = i - 25.62;
+        u2 = u1 * 0.6;
+        px = eelIf(pc, -u1 * 0.35 - 0.238, px);
+        py = eelIf(pc, 0.2 - Math.cos(u1 * 2 + 3.14) * 0.2, py);
+        pz = eelIf(pc, u1 * 0.35 - 0.359, pz);
+
+        pc = eelBand(eelAbove(i, 27.26), eelBelow(i, 29.75));
+        u1 = (i - 27.26) * s.tpi * 0.5 + 0.78;
+        u2 = i - 19.18;
+        px = eelIf(pc, Math.cos(u1) * 0.33 - 1.049, px);
+        py = eelIf(pc, 0, py);
+        pz = eelIf(pc, Math.sin(u1) * 0.33 - 0.0135, pz);
+
+        pc = eelAbove(i, 29.75);
+        u1 = i - 29.75;
+        u2 = u1 * 1.5;
+        px = eelIf(pc, u1 * 0.5 - 1.04, px);
+        py = eelIf(pc, 0, py);
+        pz = eelIf(pc, -0.35 * (Math.cos(u2) * 0.5 + 0.5), pz);
+
+        py = py * eelIf(s.mf - 4, -1, 1) + 0.5;
+        px = px * eelIf(s.mf % 2, 1, -1);
+        px = px * 0.1 + s.ix * 0.905;
+        py = py * 0.1 + s.iy * 0.905;
+        pz = pz * 0.1 + s.iz * 0.905;
+
+        pc = eelBelow(i, s.u);
+        s.oox = eelIf(pc, px, s.oox);
+        s.ooy = eelIf(pc, py, s.ooy);
+        s.ooz = eelIf(pc, pz, s.ooz);
+        s.ix = px;
+        s.iy = py;
+        s.iz = pz;
+
+        var red = eelBor(eelBelow(i, 5.02), eelAbove(i, 9.86));
+        red = eelIf(red, Math.atan2(s.iz - s.kz, s.ix - s.kx), 3.14 * eelIf(s.mf % 2, 1, 0));
+        u1 = Math.cos(red);
+        u2 = Math.sin(red);
+        var blue = -u2;
+        var green = u1;
+        u1 = s.ix + s.jx - s.kx * 2;
+        u2 = s.iz + s.jz - s.kz * 2;
+        s.by = (s.by * 7 - ((s.iz - s.jz) * u1 - (s.ix - s.jx) * u2) * 8000) * 0.125
+                * eelIf(eelAbove(i, 30.82), 31.82 - i, 1);
+        red = sqr(blue) + sqr(green);
+        s.rrz = eelIf(pc, (Math.atan2(red, s.by) - 1.57) * eelIf(eelBelow(s.mf, 2), 1, -1), s.rrz);
+        pc = s.hi * 0.04 / safeSqrt(red + sqr(s.by));
+        px = px - s.ox + blue * pc;
+        py = py - s.oy + s.by * pc;
+        pz = pz - s.oz + green * pc;
+
+        var x1 = px * s.cy + pz * s.sy;
+        var z1 = pz * s.cy - px * s.sy;
+        var y2 = py * s.cx + z1 * s.sx;
+        var z2 = z1 * s.cx - py * s.sx;
+        var x3 = x1 * s.cz + y2 * s.sz;
+        var y3 = y2 * s.cz - x1 * s.sz + 0.08;
+        u1 = eelIf(eelAbove(z2, 0.01), 1 / z2, 0);
+        s.lx = s.gx;
+        s.ly = s.gy;
+        s.gx = s.mx;
+        s.gy = s.my;
+        s.mx = x3 * u1;
+        s.my = eelIf(u1, y3 * u1, 4);
+
+        var x = eelIf(s.hp - 1, eelIf(s.hp - 2, s.mx, s.gx), s.lx);
+        var y = eelIf(s.hp - 1, eelIf(s.hp - 2, s.my, s.gy), s.ly);
+        x = clamp(x, -1.1, 1.1) * 1.1;
+        y = clamp(y, -1.1, 1.2) * s.w * 1.1;
+        pc = eelIf(s.hp - 1, 1, 0);
+        var bx = sign(u1) * eelBelow(Math.abs(s.gx - x) + Math.abs(s.gy - y), 0.99)
+                * eelBelow(s.my, 2) * eelBelow(s.ly, 2);
+        u1 = 1.1 - z2 * (0.9 + pc * 0.2) + pc * 0.3;
+        u2 = Math.max(0, Math.sin(i * 0.114 * 200)) * 0.2 + Math.abs(getOsc(i * 0.03) * pc) * 2;
+        return {
+            x: x,
+            y: y,
+            r: clamp(bx * (u1 * s.cr + u2), 0, 1),
+            g: clamp(bx * (u1 * s.cg + u2), 0, 1),
+            b: clamp(bx * (u1 * s.cb + u2), 0, 1)
+        };
     }
 
     function catmullRom(a, b, c, d, amount) {
@@ -594,102 +911,81 @@
     }
 
     function renderNeonCoaster(now) {
-        if (!coasterContext || !coasterCanvas) {
+        if (!lineProgram || !lineBuffer) {
             return;
         }
-        var ctx = coasterContext;
-        var width = coasterCanvas.width;
-        var height = coasterCanvas.height;
-        var ridePosition = visualTimeSeconds * 0.58;
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.globalCompositeOperation = "source-over";
-        ctx.fillStyle = "rgb(1, 2, 6)";
-        ctx.fillRect(0, 0, width, height);
-
-        var gradient = ctx.createRadialGradient(width * 0.5, height * 0.42, 0, width * 0.5, height * 0.46, width * 0.78);
-        gradient.addColorStop(0, "rgba(14, 20, 46, 0.22)");
-        gradient.addColorStop(0.55, "rgba(0, 24, 42, 0.12)");
-        gradient.addColorStop(1, "rgba(0, 0, 0, 0.82)");
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, width, height);
-        ctx.globalCompositeOperation = "lighter";
-
-        var samples = 42;
-        var leftPoints = [];
-        var rightPoints = [];
-        for (var i = 0; i <= samples; i++) {
-            var progress = i / samples;
-            var sample = coasterRideSample(progress, width, height, ridePosition);
-            leftPoints.push(sample.left);
-            rightPoints.push(sample.right);
-            if (i > 0 && i % 11 === 0) {
-                var rayColor = "rgba(58, 190, 255, " + (0.04 + audio.treb * 0.07) + ")";
-                drawCoasterLine(
-                        ctx,
-                        { x: width * 0.5, y: height * 1.04, z: 0 },
-                        sample.center,
-                        rayColor,
-                        0.8,
-                        2.2
-                );
+        updateAvsNeonFrame(canvas.width, canvas.height);
+        var count = avsNeonState.n;
+        var vertexCount = 0;
+        var previous = null;
+        for (var i = 0; i < count; i++) {
+            var vertex = avsNeonPoint(i);
+            var alpha = Math.max(vertex.r, vertex.g, vertex.b) > 0 ? 0.96 : 0;
+            if (previous && previous.a > 0 && alpha > 0) {
+                var distance = Math.abs(previous.x - vertex.x) + Math.abs(previous.y - vertex.y);
+                if (distance < 1.4) {
+                    var offset = vertexCount * 6;
+                    avsNeonVertices[offset] = previous.x;
+                    avsNeonVertices[offset + 1] = -previous.y;
+                    avsNeonVertices[offset + 2] = previous.r;
+                    avsNeonVertices[offset + 3] = previous.g;
+                    avsNeonVertices[offset + 4] = previous.b;
+                    avsNeonVertices[offset + 5] = previous.a;
+                    offset += 6;
+                    avsNeonVertices[offset] = vertex.x;
+                    avsNeonVertices[offset + 1] = -vertex.y;
+                    avsNeonVertices[offset + 2] = vertex.r;
+                    avsNeonVertices[offset + 3] = vertex.g;
+                    avsNeonVertices[offset + 4] = vertex.b;
+                    avsNeonVertices[offset + 5] = alpha;
+                    vertexCount += 2;
+                }
             }
+            previous = {
+                x: vertex.x,
+                y: vertex.y,
+                r: vertex.r,
+                g: vertex.g,
+                b: vertex.b,
+                a: alpha
+            };
         }
 
-        var farStart = Math.floor(samples * 0.56);
-        var midStart = Math.floor(samples * 0.25);
-        var nearEnd = Math.floor(samples * 0.38);
-        var farColor = "rgba(88, 154, 255, 0.46)";
-        var midColor = "rgba(42, 224, 226, 0.58)";
-        var nearColor = coasterColor(4, 0.10);
-        drawCoasterPath(ctx, leftPoints, farStart, samples, farColor, 1.1, 3.4);
-        drawCoasterPath(ctx, rightPoints, farStart, samples, farColor, 1.1, 3.4);
-        drawCoasterPath(ctx, leftPoints, midStart, samples, midColor, 2.2, 5.8);
-        drawCoasterPath(ctx, rightPoints, midStart, samples, midColor, 2.2, 5.8);
-        drawCoasterPath(ctx, leftPoints, 0, nearEnd, nearColor, 5.4, 12.0);
-        drawCoasterPath(ctx, rightPoints, 0, nearEnd, nearColor, 5.4, 12.0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.useProgram(lineProgram);
+        gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+        gl.enableVertexAttribArray(lineLocations.position);
+        gl.vertexAttribPointer(lineLocations.position, 2, gl.FLOAT, false, 24, 0);
+        gl.enableVertexAttribArray(lineLocations.color);
+        gl.vertexAttribPointer(lineLocations.color, 4, gl.FLOAT, false, 24, 8);
 
-        var segments = [];
-        var tieCount = 14;
-        var tiePhaseOffset = visualTimeSeconds * 0.82;
-        for (var tieIndex = 0; tieIndex < tieCount; tieIndex++) {
-            var raw = wrap01(tieIndex / tieCount - tiePhaseOffset);
-            var tieProgress = Math.pow(raw, 0.84);
-            if (tieProgress < 0.025 || tieProgress > 0.98) {
-                continue;
-            }
-            var tieSample = coasterRideSample(tieProgress, width, height, ridePosition);
-            segments.push({
-                start: tieSample.left,
-                end: tieSample.right,
-                index: tieIndex * 3,
-                kind: "tie",
-                depth: tieProgress
-            });
+        if (!avsNeonFrameStarted) {
+            gl.clearColor(0, 0, 0, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            avsNeonFrameStarted = true;
+        } else {
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+                -1, -1, 0, 0, 0, 0.50,
+                1, -1, 0, 0, 0, 0.50,
+                -1, 1, 0, 0, 0, 0.50,
+                -1, 1, 0, 0, 0, 0.50,
+                1, -1, 0, 0, 0, 0.50,
+                1, 1, 0, 0, 0, 0.50
+            ]), gl.STREAM_DRAW);
+            gl.enable(gl.BLEND);
+            gl.blendEquation(gl.FUNC_ADD);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
         }
 
-        segments.sort(function (a, b) { return b.depth - a.depth; });
-        for (var j = 0; j < segments.length; j++) {
-            var segment = segments[j];
-            var near = 1 - Math.max(0, Math.min(1, segment.depth));
-            var railWidth = (segment.kind === "tie" ? 0.55 : 1.0) + Math.pow(near, 1.25) * (segment.kind === "tie" ? 4.0 : 7.4);
-            var glowWidth = (segment.kind === "tie" ? 1.4 : 3.0) + Math.pow(near, 1.35) * (segment.kind === "tie" ? 10.0 : 18.0);
-            var color = coasterColor(segment.index, segment.depth);
-            if (segment.kind === "tie") {
-                color = "rgba(164, 232, 255, " + (0.10 + near * 0.32) + ")";
-            }
-            drawCoasterLine(ctx, segment.start, segment.end, color, railWidth, glowWidth);
-        }
-
-        var vanishing = coasterRideSample(1, width, height, ridePosition).center;
-        drawCoasterPointGlow(ctx, vanishing, "rgba(145, 226, 255, 0.78)", 1.8 + audio.treb * 3.0);
-
-        ctx.globalCompositeOperation = "source-over";
-        var vignette = ctx.createRadialGradient(width * 0.5, height * 0.58, height * 0.08, width * 0.5, height * 0.58, width * 0.74);
-        vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
-        vignette.addColorStop(0.70, "rgba(0, 0, 0, 0.16)");
-        vignette.addColorStop(1, "rgba(0, 0, 0, 0.62)");
-        ctx.fillStyle = vignette;
-        ctx.fillRect(0, 0, width, height);
+        gl.bufferData(gl.ARRAY_BUFFER, avsNeonVertices, gl.DYNAMIC_DRAW);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        gl.lineWidth(3);
+        gl.drawArrays(gl.LINES, 0, vertexCount);
+        gl.disable(gl.BLEND);
     }
 
     function compileShader(type, source) {
@@ -704,9 +1000,9 @@
         return shader;
     }
 
-    function createProgram() {
-        var vertexShader = compileShader(gl.VERTEX_SHADER, vertexSource);
-        var fragmentShader = compileShader(gl.FRAGMENT_SHADER, fragmentSource);
+    function createLinkedProgram(vertexProgramSource, fragmentProgramSource) {
+        var vertexShader = compileShader(gl.VERTEX_SHADER, vertexProgramSource);
+        var fragmentShader = compileShader(gl.FRAGMENT_SHADER, fragmentProgramSource);
         var linkedProgram = gl.createProgram();
         gl.attachShader(linkedProgram, vertexShader);
         gl.attachShader(linkedProgram, fragmentShader);
@@ -721,6 +1017,14 @@
         return linkedProgram;
     }
 
+    function createProgram() {
+        return createLinkedProgram(vertexSource, fragmentSource);
+    }
+
+    function createLineProgram() {
+        return createLinkedProgram(lineVertexSource, lineFragmentSource);
+    }
+
     function resize() {
         var ratio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
         var width = Math.max(320, Math.floor(window.innerWidth * ratio));
@@ -728,6 +1032,7 @@
         if (canvas.width !== width || canvas.height !== height) {
             canvas.width = width;
             canvas.height = height;
+            avsNeonFrameStarted = false;
             if (gl) {
                 gl.viewport(0, 0, width, height);
             }
@@ -772,6 +1077,7 @@
         for (var i = 0; i < audioSize; i++) {
             var sourceIndex = Math.min(bytes.length - 1, Math.floor(i * bytes.length / audioSize));
             var sample = ((bytes[sourceIndex] & 255) - 128) / 128;
+            waveformSamples[i] = sample;
             low = low * 0.94 + sample * 0.06;
             var mid = sample - low;
             sum += sample * sample;
@@ -794,6 +1100,11 @@
         audio.targetBass = 0.42 + 0.28 * Math.max(0, Math.sin(t * 2.20));
         audio.targetMid = 0.32 + 0.22 * Math.sin(t * 1.70 + 1.4);
         audio.targetTreb = 0.28 + 0.18 * Math.sin(t * 5.40);
+        for (var i = 0; i < waveformSamples.length; i++) {
+            var phase = i / waveformSamples.length;
+            waveformSamples[i] = Math.sin(t * 2.2 + phase * Math.PI * 2) * 0.32
+                    + Math.sin(t * 4.7 + phase * Math.PI * 8) * 0.10;
+        }
     }
 
     function smoothAudio() {
@@ -914,7 +1225,7 @@
         }
 
         var useCoaster = isCoasterPreset();
-        setCoasterVisible(useCoaster);
+        setCoasterVisible(false);
         if (useCoaster) {
             try {
                 renderNeonCoaster(now);
@@ -930,6 +1241,7 @@
 
         try {
             gl.useProgram(program);
+            bindTunnelGeometry();
             applyPresetUniforms(now);
             gl.drawArrays(gl.TRIANGLES, 0, 6);
         } catch (exception) {
@@ -971,6 +1283,9 @@
         transitionTo = copyPreset(presets[nextIndex]);
         transitionStartAt = performance.now();
         presetIndex = nextIndex;
+        if (presets[presetIndex].mode === "coaster") {
+            resetAvsNeonState();
+        }
         updatePresetOverlay();
     }
 
@@ -981,8 +1296,8 @@
     }
 
     function initGeometry() {
-        var buffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        quadBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
             -1, -1,
             1, -1,
@@ -991,9 +1306,21 @@
             1, -1,
             1, 1
         ]), gl.STATIC_DRAW);
-        var positionLocation = gl.getAttribLocation(program, "a_position");
-        gl.enableVertexAttribArray(positionLocation);
-        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+        quadPositionLocation = gl.getAttribLocation(program, "a_position");
+        gl.enableVertexAttribArray(quadPositionLocation);
+        gl.vertexAttribPointer(quadPositionLocation, 2, gl.FLOAT, false, 0, 0);
+    }
+
+    function bindTunnelGeometry() {
+        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+        gl.enableVertexAttribArray(quadPositionLocation);
+        gl.vertexAttribPointer(quadPositionLocation, 2, gl.FLOAT, false, 0, 0);
+    }
+
+    function initLineGeometry() {
+        lineBuffer = gl.createBuffer();
+        lineLocations.position = gl.getAttribLocation(lineProgram, "a_position");
+        lineLocations.color = gl.getAttribLocation(lineProgram, "a_color");
     }
 
     function initLocations() {
@@ -1014,7 +1341,8 @@
                 antialias: false,
                 depth: false,
                 stencil: false,
-                premultipliedAlpha: false
+                premultipliedAlpha: false,
+                preserveDrawingBuffer: true
             });
             if (!gl) {
                 safeBridge("reportWebGl", false);
@@ -1025,8 +1353,10 @@
             safeBridge("reportWebGl", true);
             resize();
             program = createProgram();
+            lineProgram = createLineProgram();
             gl.useProgram(program);
             initGeometry();
+            initLineGeometry();
             initLocations();
             gl.disable(gl.DEPTH_TEST);
             gl.disable(gl.CULL_FACE);

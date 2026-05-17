@@ -16,3 +16,9 @@ Bundled BRAVIA 3D tunnel visualizer
 Files: visualizer/tunnel.html, visualizer/tunnel.js
 Source: Original WebGL tunnel renderer authored for this BRAVIA Launcher project.
 License: Same project-local use as BRAVIA Launcher.
+
+Winamp Advanced Visualization Studio compatibility work
+Files: visualizer/tunnel.js
+Source reference: Nullsoft/Visbot Advanced Visualization Studio source.
+License: BSD-style AVS source license.
+Neon Coaster preset credit: UnConeD / Steven Wittens.
