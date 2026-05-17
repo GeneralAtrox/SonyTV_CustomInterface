@@ -456,9 +456,12 @@
         + "in vec2 v_uv;\n"
         + "uniform sampler2D u_source;\n"
         + "uniform sampler2D u_destination;\n"
+        + "uniform sampler2D u_mask;\n"
         + "uniform vec2 u_resolution;\n"
         + "uniform float u_mode;\n"
         + "uniform float u_adjust;\n"
+        + "uniform float u_maskEnabled;\n"
+        + "uniform float u_maskInvert;\n"
         + "out vec4 outColor;\n"
         + "vec3 clampColor(vec3 value) {\n"
         + "    return clamp(value, vec3(0.0), vec3(1.0));\n"
@@ -491,6 +494,13 @@
         + "        result = clampColor(source.rgb - destination.rgb);\n"
         + "    } else if (u_mode < 10.5) {\n"
         + "        result = destination.rgb * source.rgb;\n"
+        + "    } else if (u_mode < 11.5 && u_maskEnabled > 0.5) {\n"
+        + "        vec3 mask = texture(u_mask, v_uv).rgb;\n"
+        + "        float amount = max(mask.r, max(mask.g, mask.b));\n"
+        + "        if (u_maskInvert > 0.5) {\n"
+        + "            amount = 1.0 - amount;\n"
+        + "        }\n"
+        + "        result = mix(destination.rgb, source.rgb, clamp(amount, 0.0, 1.0));\n"
         + "    } else {\n"
         + "        float alpha = clamp(u_adjust / 255.0, 0.0, 1.0);\n"
         + "        result = mix(destination.rgb, source.rgb, alpha);\n"
@@ -1108,7 +1118,7 @@
         return -1;
     }
 
-    function composeAvsTextures(sourceTexture, destinationTexture, target, internalMode, adjust) {
+    function composeAvsTextures(sourceTexture, destinationTexture, target, internalMode, adjust, maskTexture, maskInvert) {
         if (!sourceTexture || !destinationTexture || !target || !avsBlendProgram) {
             return false;
         }
@@ -1122,22 +1132,30 @@
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, destinationTexture);
         gl.uniform1i(avsBlendLocations.destination, 1);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, maskTexture || destinationTexture);
+        gl.uniform1i(avsBlendLocations.mask, 2);
         gl.uniform2f(avsBlendLocations.resolution, target.width, target.height);
         gl.uniform1f(avsBlendLocations.mode, internalMode);
         gl.uniform1f(avsBlendLocations.adjust, adjust == null ? 128 : adjust);
+        gl.uniform1f(avsBlendLocations.maskEnabled, maskTexture ? 1 : 0);
+        gl.uniform1f(avsBlendLocations.maskInvert, maskInvert ? 1 : 0);
         gl.disable(gl.BLEND);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, null);
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, null);
         gl.activeTexture(gl.TEXTURE0);
         return true;
     }
 
-    function blendAvsTextureToTarget(texture, target, blendMode, blendValue, tempTarget) {
+    function blendAvsTextureToTarget(texture, target, blendMode, blendValue, tempTarget, bufferIndex, bufferInvert) {
         if (!texture || !target || blendMode === 0) {
             return false;
         }
-        var internalMode = effectListBlendToInternalMode(blendMode);
+        var bufferTarget = null;
+        var internalMode = blendMode === 12 ? 11 : effectListBlendToInternalMode(blendMode);
         if (internalMode < 0) {
             return false;
         }
@@ -1148,7 +1166,14 @@
         if (!tempTarget) {
             return false;
         }
-        if (!composeAvsTextures(texture, target.texture, tempTarget, internalMode, blendValue)) {
+        if (blendMode === 12) {
+            bufferTarget = ensureAvsGlobalBuffer(bufferIndex || 0, false);
+            if (!bufferTarget) {
+                return false;
+            }
+        }
+        if (!composeAvsTextures(texture, target.texture, tempTarget, internalMode, blendValue,
+                bufferTarget ? bufferTarget.texture : null, bufferInvert)) {
             return false;
         }
         copyAvsTexture(tempTarget.texture, target, 1);
@@ -2617,7 +2642,7 @@
             clearAvsRenderTarget(node.scratch);
         }
         blendAvsTextureToTarget(parentFront.texture, node.front, settings.blendInMode || 0,
-                settings.inBlendValue, node.scratch);
+                settings.inBlendValue, node.scratch, settings.bufferIn, settings.inInvert);
 
         state.front = node.front;
         state.scratch = node.scratch;
@@ -2629,7 +2654,7 @@
         state.front = parentFront;
         state.scratch = parentScratch;
         blendAvsTextureToTarget(node.front.texture, parentFront, settings.blendOutMode || 0,
-                settings.outBlendValue, parentScratch);
+                settings.outBlendValue, parentScratch, settings.bufferOut, settings.outInvert);
         bindAvsLineTarget(state.front);
     }
 
@@ -4030,9 +4055,12 @@
         avsBlendLocations.position = gl.getAttribLocation(avsBlendProgram, "a_position");
         avsBlendLocations.source = gl.getUniformLocation(avsBlendProgram, "u_source");
         avsBlendLocations.destination = gl.getUniformLocation(avsBlendProgram, "u_destination");
+        avsBlendLocations.mask = gl.getUniformLocation(avsBlendProgram, "u_mask");
         avsBlendLocations.resolution = gl.getUniformLocation(avsBlendProgram, "u_resolution");
         avsBlendLocations.mode = gl.getUniformLocation(avsBlendProgram, "u_mode");
         avsBlendLocations.adjust = gl.getUniformLocation(avsBlendProgram, "u_adjust");
+        avsBlendLocations.maskEnabled = gl.getUniformLocation(avsBlendProgram, "u_maskEnabled");
+        avsBlendLocations.maskInvert = gl.getUniformLocation(avsBlendProgram, "u_maskInvert");
         avsWarpLocations.position = gl.getAttribLocation(avsWarpProgram, "a_position");
         avsWarpLocations.uv = gl.getAttribLocation(avsWarpProgram, "a_uv");
         avsWarpLocations.alpha = gl.getAttribLocation(avsWarpProgram, "a_alpha");
