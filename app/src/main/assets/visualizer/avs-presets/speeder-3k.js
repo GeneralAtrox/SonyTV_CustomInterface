@@ -24,7 +24,7 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
             "sourceOffset": 1106
         },
         {
-            "type": "oscilloscope",
+            "type": "oscilloscopeStar",
             "sourceEffectId": 3,
             "sourceOffset": 37
         },
@@ -207,15 +207,21 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
             "nestedOffset": 37,
             "effects": [
                 {
-                    "type": "oscilloscope",
-                    "name": "Oscilloscope",
+                    "type": "oscilloscopeStar",
+                    "name": "Oscilloscope Star",
                     "sourceEffectId": 3,
                     "sourceOffset": 37,
                     "configLength": 8,
                     "opaque": false,
                     "settings": {
-                        "mode": 3,
-                        "flags": 0,
+                        "effect": 3,
+                        "configuredColorCount": 0,
+                        "colorCount": 0,
+                        "colors": [],
+                        "channel": "left",
+                        "yPosition": 0,
+                        "size": 8,
+                        "rotation": 3,
                         "ints": [
                             3,
                             0

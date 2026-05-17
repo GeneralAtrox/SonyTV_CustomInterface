@@ -1404,13 +1404,13 @@
                     lineMode: cloneAvsLineMode(context.lineMode),
                     colors: effect.settings && effect.settings.colors ? effect.settings.colors : [createAvsColor(0xffffff)]
                 });
-            } else if (effect.type === "oscilloscope") {
+            } else if (effect.type === "oscilloscopeStar") {
                 addAvsRuntimeRenderer(runtime, nodes, {
-                    kind: "oscilloscope",
-                    sampleCount: 160,
+                    kind: "oscilloscopeStar",
+                    settings: effect.settings || {},
                     lineMode: cloneAvsLineMode(context.lineMode),
-                    colors: [createAvsColor(0x66f7ff)],
-                    texer: null
+                    colors: effect.settings && effect.settings.colors ? effect.settings.colors : [createAvsColor(0xffffff)],
+                    rotation: 0
                 });
             } else if (effect.type === "dotFountain" && effect.settings && effect.settings.eel) {
                 addAvsRuntimeRenderer(runtime, nodes, createAvsEelRenderer("dotFountain", effect.settings,
@@ -1645,8 +1645,8 @@
             renderAvsScatter(renderer);
             return;
         }
-        if (renderer.kind === "oscilloscope") {
-            renderAvsOscilloscopeRenderer(renderer);
+        if (renderer.kind === "oscilloscopeStar") {
+            renderAvsOscilloscopeStarRenderer(renderer);
             return;
         }
         if (renderer.kind === "simple") {
@@ -2005,29 +2005,57 @@
         drawAvsVertices(avsStackVertices, vertexCount, "additive");
     }
 
-    function renderAvsOscilloscopeRenderer(renderer) {
-        var sampleCount = renderer.sampleCount || 256;
-        ensureAvsStackVertexCapacity(sampleCount, renderer.texer ? 48 : 6);
-        var vertexCount = 0;
-        var color = renderer.colors && renderer.colors.length > 0 ? renderer.colors[0].raw : 0x66f7ff;
-        var previous = avsStackPreviousScratch;
-        var current = avsStackPointScratch;
-        var hasPrevious = false;
-        for (var index = 0; index < sampleCount; index++) {
-            var position = index / Math.max(1, sampleCount - 1);
-            current[0] = position * 2 - 1;
-            current[1] = getOsc(position) * (0.55 + audio.rms * 0.35);
-            current[2] = avsRawRed(color);
-            current[3] = avsRawGreen(color);
-            current[4] = avsRawBlue(color);
-            current[5] = 0.62 + audio.rms * 0.24;
-            if (hasPrevious) {
-                vertexCount = addAvsSegmentTo(avsStackVertices, vertexCount, previous, current,
-                        Math.max(1, renderer.lineMode.lineWidth));
-            }
-            copyAvsPoint(current, previous);
-            hasPrevious = true;
+    function renderAvsOscilloscopeStarRenderer(renderer) {
+        var settings = renderer.settings || {};
+        var colorCount = Math.max(0, Math.round(settings.colorCount == null
+                ? ((renderer.colors || []).length || 1)
+                : settings.colorCount));
+        if (colorCount <= 0) {
+            return;
         }
+        var width = Math.max(1, avsFramebufferState ? avsFramebufferState.width : canvas.width);
+        var height = Math.max(1, avsFramebufferState ? avsFramebufferState.height : canvas.height);
+        var size = Math.max(0, Math.round(settings.size == null ? 8 : settings.size));
+        var rotationSpeed = Math.round(settings.rotation == null ? 3 : settings.rotation);
+        var scale = size / 32;
+        var radius = Math.min(height * scale, width * scale);
+        var yPosition = Math.round(settings.yPosition || 0);
+        var centerX = yPosition === 2 ? width / 2 : (yPosition === 0 ? width / 4 : width * 0.75);
+        var centerY = height / 2;
+        var color = nextAvsRendererColor(renderer, 0xffffff);
+        var channel = settings.channel || "center";
+        var segmentCount = 5 * 64;
+        ensureAvsStackVertexCapacity(segmentCount, 6);
+
+        var vertexCount = 0;
+        var sampleIndex = 0;
+        for (var arm = 0; arm < 5; arm++) {
+            var armSin = Math.sin((renderer.rotation || 0) + arm * (Math.PI * 2 / 5));
+            var armCos = Math.cos((renderer.rotation || 0) + arm * (Math.PI * 2 / 5));
+            var distance = 0;
+            var lastX = centerX;
+            var lastY = centerY;
+            var distanceStep = radius / 64;
+            var waveScale = 1 / 1024;
+            var waveScaleStep = ((1 / 128) - (1 / 1024)) / 64;
+            for (var point = 0; point < 64; point++) {
+                var wave = avsWaveSigned(sampleIndex, 575, channel) * 127;
+                sampleIndex++;
+                var offset = wave * waveScale * radius;
+                var x = centerX + armCos * distance - armSin * offset;
+                var y = centerY + armSin * distance + armCos * offset;
+                if ((x >= 0 && x < width && y >= 0 && y < height)
+                        || (lastX >= 0 && lastX < width && lastY >= 0 && lastY < height)) {
+                    vertexCount = addAvsPixelSegmentTo(avsStackVertices, vertexCount,
+                            lastX, lastY, x, y, color, 1, renderer.lineMode.lineWidth);
+                }
+                lastX = x;
+                lastY = y;
+                distance += distanceStep;
+                waveScale += waveScaleStep;
+            }
+        }
+        renderer.rotation = wrap01(((renderer.rotation || 0) + 0.01 * rotationSpeed) / (Math.PI * 2)) * Math.PI * 2;
         drawAvsVertices(avsStackVertices, vertexCount, renderer.lineMode.blendMode);
     }
 

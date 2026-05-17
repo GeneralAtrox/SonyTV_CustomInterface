@@ -24,7 +24,7 @@ window.braviaAvsPresetDefinitions["containment"] = {
             "sourceOffset": 798
         },
         {
-            "type": "oscilloscope",
+            "type": "oscilloscopeStar",
             "sourceEffectId": 3,
             "sourceOffset": 37
         },
@@ -162,15 +162,26 @@ window.braviaAvsPresetDefinitions["containment"] = {
             "nestedOffset": 37,
             "effects": [
                 {
-                    "type": "oscilloscope",
-                    "name": "Oscilloscope",
+                    "type": "oscilloscopeStar",
+                    "name": "Oscilloscope Star",
                     "sourceEffectId": 3,
                     "sourceOffset": 37,
                     "configLength": 8,
                     "opaque": false,
                     "settings": {
-                        "mode": 4,
-                        "flags": 815,
+                        "effect": 4,
+                        "configuredColorCount": 815,
+                        "colorCount": 1,
+                        "colors": [
+                            {
+                                "raw": 16777215,
+                                "hex": "#ffffff"
+                            }
+                        ],
+                        "channel": "right",
+                        "yPosition": 0,
+                        "size": 8,
+                        "rotation": 3,
                         "ints": [
                             4,
                             815

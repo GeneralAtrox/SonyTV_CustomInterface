@@ -11,7 +11,7 @@ const EFFECT_NAMES = new Map([
     [0, "Effect List"],
     [1, "Simple"],
     [2, "Dot Plane"],
-    [3, "Oscilloscope"],
+    [3, "Oscilloscope Star"],
     [4, "Blur"],
     [5, "Bass Spin"],
     [6, "Color Fade"],
@@ -62,7 +62,7 @@ const EFFECT_TYPES = new Map([
     [-2, "effectList"],
     [0, "effectList"],
     [1, "simple"],
-    [3, "oscilloscope"],
+    [3, "oscilloscopeStar"],
     [6, "colorFade"],
     [12, "scatter"],
     [15, "dotFountain"],
@@ -384,6 +384,44 @@ function decodeSimple(config) {
     };
 }
 
+function decodeOscilloscopeStar(config) {
+    const effect = readInt32At(config, 0, 40);
+    const configuredColorCount = config.length >= 8 ? readInt32At(config, 4) : 1;
+    const colors = [];
+    let colorCount = configuredColorCount;
+    let offset = 8;
+    if (configuredColorCount > 16) {
+        colorCount = 1;
+        colors.push({ raw: 0xffffff, hex: "#ffffff" });
+    } else if (configuredColorCount > 0) {
+        colorCount = configuredColorCount;
+        for (let index = 0; index < colorCount; index++) {
+            if (offset + 4 <= config.length) {
+                const color = readUInt32At(config, offset);
+                colors.push({ raw: color, hex: colorToHex(color) });
+                offset += 4;
+            } else {
+                colors.push({ raw: index === 0 ? 0xffffff : 0, hex: index === 0 ? "#ffffff" : "#000000" });
+            }
+        }
+    } else {
+        colorCount = 0;
+    }
+
+    const channelId = (effect >>> 2) & 3;
+    return {
+        effect,
+        configuredColorCount,
+        colorCount,
+        colors,
+        channel: channelId === 0 ? "left" : channelId === 1 ? "right" : "center",
+        yPosition: effect >>> 4,
+        size: readInt32At(config, offset, 8),
+        rotation: readInt32At(config, offset + 4, 3),
+        ints: previewInts(config)
+    };
+}
+
 function decodeClearScreen(config) {
     const colorRaw = readUInt32At(config, 4);
     return {
@@ -518,7 +556,7 @@ function decodeEffectSettings(effectId, config) {
         return decodeSimple(config);
     }
     if (effectId === 3) {
-        return decodeIntegerConfig(config, ["mode", "flags"]);
+        return decodeOscilloscopeStar(config);
     }
     if (effectId === 6) {
         return decodeColorFade(config);

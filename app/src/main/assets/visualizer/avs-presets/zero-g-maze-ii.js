@@ -34,7 +34,7 @@ window.braviaAvsPresetDefinitions["zeroGMazeII"] = {
             "sourceOffset": 49
         },
         {
-            "type": "oscilloscope",
+            "type": "oscilloscopeStar",
             "sourceEffectId": 3,
             "sourceOffset": 61
         },
@@ -148,15 +148,21 @@ window.braviaAvsPresetDefinitions["zeroGMazeII"] = {
                     }
                 },
                 {
-                    "type": "oscilloscope",
-                    "name": "Oscilloscope",
+                    "type": "oscilloscopeStar",
+                    "name": "Oscilloscope Star",
                     "sourceEffectId": 3,
                     "sourceOffset": 61,
                     "configLength": 8,
                     "opaque": false,
                     "settings": {
-                        "mode": 5,
-                        "flags": 0,
+                        "effect": 5,
+                        "configuredColorCount": 0,
+                        "colorCount": 0,
+                        "colors": [],
+                        "channel": "right",
+                        "yPosition": 0,
+                        "size": 8,
+                        "rotation": 3,
                         "ints": [
                             5,
                             0
