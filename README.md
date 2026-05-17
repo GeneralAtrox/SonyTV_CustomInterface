@@ -44,3 +44,11 @@ Grant audio capture permission if testing the visualizer:
 ```powershell
 adb shell pm grant com.svjkr.sonytvlauncher android.permission.RECORD_AUDIO
 ```
+
+## AVS Interpreter Check
+
+The Winamp AVS/EEL interpreter can be checked locally without Android Studio:
+
+```powershell
+node tools\test-avs-eel.js
+```

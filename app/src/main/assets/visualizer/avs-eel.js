@@ -77,6 +77,22 @@
     var FN_BOR = 15;
     var FN_EQUAL = 16;
     var FN_GETOSC = 17;
+    var FN_TAN = 18;
+    var FN_ASIN = 19;
+    var FN_ATAN = 20;
+    var FN_POW = 21;
+    var FN_EXP = 22;
+    var FN_LOG = 23;
+    var FN_LOG10 = 24;
+    var FN_FLOOR = 25;
+    var FN_CEIL = 26;
+    var FN_INT = 27;
+    var FN_RAND = 28;
+    var FN_BNOT = 29;
+    var FN_SIGMOID = 30;
+    var FN_BITOR = 31;
+    var FN_BITAND = 32;
+    var FN_INVSQRT = 33;
 
     function tokenize(source) {
         var tokens = [];
@@ -375,8 +391,17 @@
         if (name === "cos") {
             return finite(Math.cos(first || 0));
         }
+        if (name === "tan") {
+            return finite(Math.tan(first || 0));
+        }
+        if (name === "asin") {
+            return finite(Math.asin(Math.max(-1, Math.min(1, first || 0))));
+        }
         if (name === "acos") {
             return finite(Math.acos(Math.max(-1, Math.min(1, first || 0))));
+        }
+        if (name === "atan") {
+            return finite(Math.atan(first || 0));
         }
         if (name === "atan2") {
             return finite(Math.atan2(first || 0, second || 0));
@@ -384,11 +409,39 @@
         if (name === "sqrt") {
             return finite(Math.sqrt(Math.max(0, first || 0)));
         }
+        if (name === "invsqrt") {
+            return Math.abs(first) < 0.00001 ? 0 : finite(1 / Math.sqrt(Math.max(0, first || 0)));
+        }
         if (name === "sqr") {
             return finite((first || 0) * (first || 0));
         }
+        if (name === "pow") {
+            return finite(Math.pow(first || 0, second || 0));
+        }
+        if (name === "exp") {
+            return finite(Math.exp(first || 0));
+        }
+        if (name === "log") {
+            return finite(Math.log(first || 0));
+        }
+        if (name === "log10") {
+            return finite(Math.log(first || 0) * Math.LOG10E);
+        }
         if (name === "abs") {
             return finite(Math.abs(first || 0));
+        }
+        if (name === "floor") {
+            return finite(Math.floor(first || 0));
+        }
+        if (name === "ceil") {
+            return finite(Math.ceil(first || 0));
+        }
+        if (name === "int") {
+            return finite(Math.trunc(first || 0));
+        }
+        if (name === "rand") {
+            var limit = Math.floor(first || 0);
+            return limit < 1 ? Math.random() : Math.random() * limit;
         }
         if (name === "min") {
             var minimum = count > 0 ? first : 0;
@@ -419,8 +472,20 @@
         if (name === "bor") {
             return truthy(first) || truthy(second) ? 1 : 0;
         }
+        if (name === "bnot") {
+            return truthy(first) ? 0 : 1;
+        }
         if (name === "equal") {
             return Math.abs((first || 0) - (second || 0)) < 0.00001 ? 1 : 0;
+        }
+        if (name === "sigmoid") {
+            return finite(1 / (1 + Math.exp(-(first || 0) * (second || 0))));
+        }
+        if (name === "bitor") {
+            return Math.floor(first || 0) | Math.floor(second || 0);
+        }
+        if (name === "bitand") {
+            return Math.floor(first || 0) & Math.floor(second || 0);
         }
         if (name === "getosc") {
             return host && typeof host.getosc === "function"
@@ -488,8 +553,17 @@
         if (name === "cos") {
             return FN_COS;
         }
+        if (name === "tan") {
+            return FN_TAN;
+        }
+        if (name === "asin") {
+            return FN_ASIN;
+        }
         if (name === "acos") {
             return FN_ACOS;
+        }
+        if (name === "atan") {
+            return FN_ATAN;
         }
         if (name === "atan2") {
             return FN_ATAN2;
@@ -497,11 +571,38 @@
         if (name === "sqrt") {
             return FN_SQRT;
         }
+        if (name === "invsqrt") {
+            return FN_INVSQRT;
+        }
         if (name === "sqr") {
             return FN_SQR;
         }
+        if (name === "pow") {
+            return FN_POW;
+        }
+        if (name === "exp") {
+            return FN_EXP;
+        }
+        if (name === "log") {
+            return FN_LOG;
+        }
+        if (name === "log10") {
+            return FN_LOG10;
+        }
         if (name === "abs") {
             return FN_ABS;
+        }
+        if (name === "floor") {
+            return FN_FLOOR;
+        }
+        if (name === "ceil") {
+            return FN_CEIL;
+        }
+        if (name === "int") {
+            return FN_INT;
+        }
+        if (name === "rand") {
+            return FN_RAND;
         }
         if (name === "min") {
             return FN_MIN;
@@ -524,8 +625,20 @@
         if (name === "bor") {
             return FN_BOR;
         }
+        if (name === "bnot") {
+            return FN_BNOT;
+        }
         if (name === "equal") {
             return FN_EQUAL;
+        }
+        if (name === "sigmoid") {
+            return FN_SIGMOID;
+        }
+        if (name === "bitor") {
+            return FN_BITOR;
+        }
+        if (name === "bitand") {
+            return FN_BITAND;
         }
         if (name === "getosc") {
             return FN_GETOSC;
@@ -545,8 +658,17 @@
         if (id === FN_COS) {
             return finite(Math.cos(first || 0));
         }
+        if (id === FN_TAN) {
+            return finite(Math.tan(first || 0));
+        }
+        if (id === FN_ASIN) {
+            return finite(Math.asin(Math.max(-1, Math.min(1, first || 0))));
+        }
         if (id === FN_ACOS) {
             return finite(Math.acos(Math.max(-1, Math.min(1, first || 0))));
+        }
+        if (id === FN_ATAN) {
+            return finite(Math.atan(first || 0));
         }
         if (id === FN_ATAN2) {
             return finite(Math.atan2(first || 0, second || 0));
@@ -554,11 +676,39 @@
         if (id === FN_SQRT) {
             return finite(Math.sqrt(Math.max(0, first || 0)));
         }
+        if (id === FN_INVSQRT) {
+            return Math.abs(first) < 0.00001 ? 0 : finite(1 / Math.sqrt(Math.max(0, first || 0)));
+        }
         if (id === FN_SQR) {
             return finite((first || 0) * (first || 0));
         }
+        if (id === FN_POW) {
+            return finite(Math.pow(first || 0, second || 0));
+        }
+        if (id === FN_EXP) {
+            return finite(Math.exp(first || 0));
+        }
+        if (id === FN_LOG) {
+            return finite(Math.log(first || 0));
+        }
+        if (id === FN_LOG10) {
+            return finite(Math.log(first || 0) * Math.LOG10E);
+        }
         if (id === FN_ABS) {
             return finite(Math.abs(first || 0));
+        }
+        if (id === FN_FLOOR) {
+            return finite(Math.floor(first || 0));
+        }
+        if (id === FN_CEIL) {
+            return finite(Math.ceil(first || 0));
+        }
+        if (id === FN_INT) {
+            return finite(Math.trunc(first || 0));
+        }
+        if (id === FN_RAND) {
+            var limit = Math.floor(first || 0);
+            return limit < 1 ? Math.random() : Math.random() * limit;
         }
         if (id === FN_MIN) {
             var minimum = count > 0 ? first : 0;
@@ -589,8 +739,20 @@
         if (id === FN_BOR) {
             return truthy(first) || truthy(second) ? 1 : 0;
         }
+        if (id === FN_BNOT) {
+            return truthy(first) ? 0 : 1;
+        }
         if (id === FN_EQUAL) {
             return Math.abs((first || 0) - (second || 0)) < 0.00001 ? 1 : 0;
+        }
+        if (id === FN_SIGMOID) {
+            return finite(1 / (1 + Math.exp(-(first || 0) * (second || 0))));
+        }
+        if (id === FN_BITOR) {
+            return Math.floor(first || 0) | Math.floor(second || 0);
+        }
+        if (id === FN_BITAND) {
+            return Math.floor(first || 0) & Math.floor(second || 0);
         }
         if (id === FN_GETOSC) {
             return host && typeof host.getosc === "function"
