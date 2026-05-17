@@ -607,6 +607,16 @@ public class ButterchurnVisualizerHost extends FrameLayout {
         }
 
         @JavascriptInterface
+        public void reportEvent(final String eventName) {
+            mainHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    logEvent("visualizer_event", sanitize(eventName));
+                }
+            });
+        }
+
+        @JavascriptInterface
         public void reportFps(final double meanFps, final double p95FrameMs) {
             if (!Double.isFinite(meanFps)
                     || !Double.isFinite(p95FrameMs)

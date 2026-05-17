@@ -63,6 +63,8 @@ function readAvsString(buffer, state) {
 function stripRuntimeIrrelevantEel(text) {
     return text
             .replace(/\r\n/g, "\n")
+            .replace(/\0/g, "")
+            .replace(/[\u00a3\u00a4][^;\r\n]*(?=;|$)/g, "")
             .split("\n")
             .map((line) => {
                 const trimmed = line.trim();

@@ -52,3 +52,9 @@ The Winamp AVS/EEL interpreter can be checked locally without Android Studio:
 ```powershell
 node tools\test-avs-eel.js
 ```
+
+Scan installed Winamp AVS presets for supported effect stacks and EEL parser compatibility:
+
+```powershell
+node tools\scan-avs-presets.js "C:\Program Files (x86)\Winamp\Plugins\AVS"
+```

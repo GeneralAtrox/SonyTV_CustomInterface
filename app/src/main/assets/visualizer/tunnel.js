@@ -1237,6 +1237,9 @@
         if (!lineProgram || !lineBuffer) {
             return;
         }
+        if (paused && avsNeonFrameStarted) {
+            return;
+        }
         updateAvsNeonFrame(now, canvas.width, canvas.height);
         var count = avsNeonState.n;
         var runtime = avsNeonRuntime;
