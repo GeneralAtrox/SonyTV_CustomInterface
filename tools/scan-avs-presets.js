@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, "..");
 const DEFAULT_PRESET_DIR = "C:\\Program Files (x86)\\Winamp\\Plugins\\AVS";
 const SIGNATURE = Buffer.from("Nullsoft AVS Preset 0.2\x1a", "binary");
 
-const SUPPORTED_EFFECT_IDS = new Set([36, 40, 44]);
+const SUPPORTED_EFFECT_IDS = new Set([21, 36, 40, 42, 44]);
 const EFFECT_NAMES = new Map([
     [-2, "Effect List"],
     [0, "Effect List"],
@@ -33,7 +33,7 @@ const EFFECT_NAMES = new Map([
     [18, "Buffer Blit"],
     [19, "Movement"],
     [20, "Bump"],
-    [21, "On Beat Clear"],
+    [21, "Comment"],
     [22, "Blitter Feedback"],
     [23, "Noise"],
     [24, "Color Reduction"],
@@ -215,6 +215,113 @@ function decodeSuperScope(config) {
     };
 }
 
+function isPlausibleEffectId(effectId) {
+    return effectId === -2 || (effectId >= 1 && effectId <= 60);
+}
+
+function findNestedEffectOffset(config) {
+    let best = null;
+    for (let offset = 0; offset + 8 <= config.length; offset++) {
+        let cursor = offset;
+        let count = 0;
+        while (cursor + 8 <= config.length) {
+            const effectId = config.readInt32LE(cursor);
+            const configLength = config.readInt32LE(cursor + 4);
+            if (!isPlausibleEffectId(effectId)
+                    || configLength < 0
+                    || cursor + 8 + configLength > config.length) {
+                break;
+            }
+            cursor += 8 + configLength;
+            count++;
+        }
+        if (cursor === config.length && count > 0) {
+            const coverage = config.length - offset;
+            if (!best || count > best.count || (count === best.count && coverage > best.coverage)) {
+                best = { offset, count, coverage };
+            }
+        }
+    }
+    return best ? best.offset : -1;
+}
+
+function effectIsSupported(effect) {
+    if (effect.id === -2) {
+        return effect.children.length > 0 && effect.children.every(effectIsSupported);
+    }
+    return SUPPORTED_EFFECT_IDS.has(effect.id);
+}
+
+function flattenEffects(effects) {
+    const flattened = [];
+    for (const effect of effects) {
+        flattened.push(effect);
+        if (effect.children && effect.children.length > 0) {
+            flattened.push(...flattenEffects(effect.children));
+        }
+    }
+    return flattened;
+}
+
+function parseEffectChunks(buffer, startOffset, depth) {
+    const effects = [];
+    const warnings = [];
+    let offset = startOffset;
+    while (offset < buffer.length) {
+        const sourceOffset = offset;
+        if (offset + 8 > buffer.length) {
+            warnings.push(`Stopped at truncated effect header at offset ${sourceOffset}`);
+            break;
+        }
+        const effectId = buffer.readInt32LE(offset);
+        const configLength = buffer.readInt32LE(offset + 4);
+        offset += 8;
+        if (configLength < 0 || offset + configLength > buffer.length) {
+            effects.push({
+                id: effectId,
+                name: EFFECT_NAMES.get(effectId) || `External or Unknown ${effectId}`,
+                supported: false,
+                configLength: null,
+                sourceOffset,
+                opaque: true,
+                children: [],
+                superScope: null
+            });
+            warnings.push(`Stopped at opaque or malformed effect ${effectId} at offset ${sourceOffset}`);
+            break;
+        }
+
+        const config = buffer.slice(offset, offset + configLength);
+        offset += configLength;
+
+        let children = [];
+        if (effectId === -2 && depth < 8) {
+            const nestedOffset = findNestedEffectOffset(config);
+            if (nestedOffset >= 0) {
+                const parsed = parseEffectChunks(config, nestedOffset, depth + 1);
+                children = parsed.effects;
+                warnings.push(...parsed.warnings.map((warning) => `nested:${warning}`));
+            } else {
+                warnings.push(`Could not locate nested effects in Effect List at offset ${sourceOffset}`);
+            }
+        }
+
+        const effect = {
+            id: effectId,
+            name: EFFECT_NAMES.get(effectId) || `Unknown ${effectId}`,
+            supported: false,
+            configLength,
+            sourceOffset,
+            opaque: false,
+            children,
+            superScope: effectId === 36 ? decodeSuperScope(config) : null
+        };
+        effect.supported = effectIsSupported(effect);
+        effects.push(effect);
+    }
+    return { effects, warnings };
+}
+
 function parsePresetFile(filePath) {
     const data = fs.readFileSync(filePath);
     if (data.length < SIGNATURE.length || !data.slice(0, SIGNATURE.length).equals(SIGNATURE)) {
@@ -227,37 +334,8 @@ function parsePresetFile(filePath) {
         rootMode = (rootMode & ~0x80) | readInt32(data, state);
     }
 
-    const effects = [];
-    const warnings = [];
-    while (state.offset < data.length) {
-        const sourceOffset = state.offset;
-        const effectId = readInt32(data, state);
-        const configLength = readInt32(data, state);
-        if (configLength < 0 || state.offset + configLength > data.length) {
-            effects.push({
-                id: effectId,
-                name: EFFECT_NAMES.get(effectId) || `External or Unknown ${effectId}`,
-                supported: false,
-                configLength: null,
-                sourceOffset,
-                opaque: true,
-                superScope: null
-            });
-            warnings.push(`Stopped at opaque or malformed effect ${effectId} at offset ${sourceOffset}`);
-            break;
-        }
-        const config = data.slice(state.offset, state.offset + configLength);
-        state.offset += configLength;
-        effects.push({
-            id: effectId,
-            name: EFFECT_NAMES.get(effectId) || `Unknown ${effectId}`,
-            supported: SUPPORTED_EFFECT_IDS.has(effectId),
-            configLength,
-            sourceOffset,
-            superScope: effectId === 36 ? decodeSuperScope(config) : null
-        });
-    }
-    return { rootMode, effects, warnings };
+    const parsed = parseEffectChunks(data, state.offset, 0);
+    return { rootMode, effects: parsed.effects, warnings: parsed.warnings };
 }
 
 function loadEelRuntime() {
@@ -276,6 +354,9 @@ function scanEel(runtime, effects) {
     const errors = [];
     for (let index = 0; index < effects.length; index++) {
         const effect = effects[index];
+        if (effect.children && effect.children.length > 0) {
+            errors.push(...scanEel(runtime, effect.children));
+        }
         if (!effect.superScope) {
             continue;
         }
@@ -295,16 +376,17 @@ function scanEel(runtime, effects) {
 function summarizePreset(filePath, rootDir, runtime) {
     try {
         const parsed = parsePresetFile(filePath);
-        const unsupported = parsed.effects.filter((effect) => !effect.supported);
+        const flattenedEffects = flattenEffects(parsed.effects);
+        const unsupported = flattenedEffects.filter((effect) => !effect.supported);
         const eelErrors = scanEel(runtime, parsed.effects);
-        const superScopeCount = parsed.effects.filter((effect) => effect.superScope).length;
+        const superScopeCount = flattenedEffects.filter((effect) => effect.superScope).length;
         return {
             file: path.relative(rootDir, filePath),
             path: filePath,
             okToExtractNow: unsupported.length === 0 && eelErrors.length === 0,
             superScopeRunnable: superScopeCount > 0 && eelErrors.length === 0,
-            effectCount: parsed.effects.length,
-            effects: parsed.effects.map((effect) => ({
+            effectCount: flattenedEffects.length,
+            effects: flattenedEffects.map((effect) => ({
                 id: effect.id,
                 name: effect.name,
                 supported: effect.supported,

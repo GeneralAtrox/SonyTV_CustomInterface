@@ -7,8 +7,10 @@ const path = require("path");
 const SIGNATURE = Buffer.from("Nullsoft AVS Preset 0.2\x1a", "binary");
 
 const EFFECTS = {
+    21: "comment",
     36: "superScope",
     40: "lineMode",
+    42: "comment",
     44: "fastBrightness"
 };
 
@@ -205,6 +207,10 @@ function parsePreset(inputPath) {
 
         const type = EFFECTS[effectId];
         if (!type) {
+            continue;
+        }
+
+        if (type === "comment") {
             continue;
         }
 
