@@ -59,6 +59,9 @@
     var OP_BOR = 27;
     var OP_EQUAL = 28;
     var OP_GETOSC1 = 29;
+    var OP_NOT = 30;
+    var OP_BITOR = 31;
+    var OP_BITAND = 32;
 
     var FN_IF = 1;
     var FN_SIN = 2;
@@ -119,6 +122,31 @@
                 }
                 continue;
             }
+            if (character === "/" && source[index + 1] === "*") {
+                index += 2;
+                while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) {
+                    index++;
+                }
+                index = Math.min(source.length, index + 2);
+                continue;
+            }
+            if (character === "0" && (source[index + 1] === "x" || source[index + 1] === "X")) {
+                var hexStart = index;
+                index += 2;
+                while ((source[index] >= "0" && source[index] <= "9")
+                        || (source[index] >= "a" && source[index] <= "f")
+                        || (source[index] >= "A" && source[index] <= "F")) {
+                    index++;
+                }
+                if (index === hexStart + 2) {
+                    throw new Error("Invalid EEL hex literal");
+                }
+                tokens.push({
+                    type: "number",
+                    value: Number(source.slice(hexStart, index))
+                });
+                continue;
+            }
             if (isDigit(character) || (character === "." && isDigit(source[index + 1]))) {
                 var numberStart = index;
                 if (character === ".") {
@@ -165,7 +193,15 @@
                 });
                 continue;
             }
-            if ("+-*/%=(),".indexOf(character) >= 0) {
+            var pair = source.slice(index, index + 2);
+            if (pair === "==" || pair === "!=" || pair === "<=" || pair === ">="
+                    || pair === "&&" || pair === "||" || pair === "+=" || pair === "-="
+                    || pair === "*=" || pair === "/=" || pair === "%=") {
+                tokens.push({ type: "operator", value: pair });
+                index += 2;
+                continue;
+            }
+            if ("+-*/%=(),<>!&|".indexOf(character) >= 0) {
                 tokens.push({ type: "operator", value: character });
                 index++;
                 continue;
@@ -220,12 +256,13 @@
     };
 
     Parser.prototype.parseStatement = function () {
-        if (this.peek().type === "identifier" && this.peek(1).value === "=") {
+        if (this.peek().type === "identifier" && isAssignmentOperator(this.peek(1).value)) {
             var name = this.consume().value;
-            this.consume();
+            var operator = this.consume().value;
             return {
                 type: "assignment",
                 name: name,
+                operator: operator,
                 expression: this.parseExpression(0)
             };
         }
@@ -266,6 +303,13 @@
                 expression: this.parseUnary()
             };
         }
+        if (this.match("!")) {
+            return {
+                type: "unary",
+                operator: "!",
+                expression: this.parseUnary()
+            };
+        }
         return this.parsePrimary();
     };
 
@@ -300,6 +344,21 @@
     };
 
     function binaryPrecedence(operator) {
+        if (operator === "||") {
+            return 1;
+        }
+        if (operator === "&&") {
+            return 2;
+        }
+        if (operator === "|" || operator === "&") {
+            return 3;
+        }
+        if (operator === "==" || operator === "!=") {
+            return 4;
+        }
+        if (operator === "<" || operator === "<=" || operator === ">" || operator === ">=") {
+            return 5;
+        }
         if (operator === "*" || operator === "/" || operator === "%") {
             return 20;
         }
@@ -307,6 +366,64 @@
             return 10;
         }
         return -1;
+    }
+
+    function isAssignmentOperator(operator) {
+        return operator === "=" || operator === "+=" || operator === "-=" || operator === "*="
+                || operator === "/=" || operator === "%=";
+    }
+
+    function assignmentBinaryOperator(operator) {
+        if (operator === "+=") {
+            return "+";
+        }
+        if (operator === "-=") {
+            return "-";
+        }
+        if (operator === "*=") {
+            return "*";
+        }
+        if (operator === "/=") {
+            return "/";
+        }
+        if (operator === "%=") {
+            return "%";
+        }
+        return "";
+    }
+
+    function compileBinaryOperator(operator, ops) {
+        if (operator === "+") {
+            ops.push(OP_ADD);
+        } else if (operator === "-") {
+            ops.push(OP_SUB);
+        } else if (operator === "*") {
+            ops.push(OP_MUL);
+        } else if (operator === "/") {
+            ops.push(OP_DIV);
+        } else if (operator === "%") {
+            ops.push(OP_MOD);
+        } else if (operator === ">") {
+            ops.push(OP_ABOVE);
+        } else if (operator === "<") {
+            ops.push(OP_BELOW);
+        } else if (operator === ">=") {
+            ops.push(OP_BELOW, OP_NOT);
+        } else if (operator === "<=") {
+            ops.push(OP_ABOVE, OP_NOT);
+        } else if (operator === "==") {
+            ops.push(OP_EQUAL);
+        } else if (operator === "!=") {
+            ops.push(OP_EQUAL, OP_NOT);
+        } else if (operator === "&&") {
+            ops.push(OP_BAND);
+        } else if (operator === "||") {
+            ops.push(OP_BOR);
+        } else if (operator === "&") {
+            ops.push(OP_BITAND);
+        } else if (operator === "|") {
+            ops.push(OP_BITOR);
+        }
     }
 
     function readVariable(scope, name) {
@@ -330,23 +447,13 @@
         }
         if (node.type === "unary") {
             compileExpression(node.expression, ops);
-            ops.push(OP_NEG);
+            ops.push(node.operator === "!" ? OP_NOT : OP_NEG);
             return;
         }
         if (node.type === "binary") {
             compileExpression(node.left, ops);
             compileExpression(node.right, ops);
-            if (node.operator === "+") {
-                ops.push(OP_ADD);
-            } else if (node.operator === "-") {
-                ops.push(OP_SUB);
-            } else if (node.operator === "*") {
-                ops.push(OP_MUL);
-            } else if (node.operator === "/") {
-                ops.push(OP_DIV);
-            } else if (node.operator === "%") {
-                ops.push(OP_MOD);
-            }
+            compileBinaryOperator(node.operator, ops);
             return;
         }
         if (node.type === "call") {
@@ -371,7 +478,14 @@
 
     function compileStatement(statement, ops) {
         if (statement.type === "assignment") {
+            var operator = assignmentBinaryOperator(statement.operator);
+            if (operator) {
+                ops.push(OP_GET, statement.name);
+            }
             compileExpression(statement.expression, ops);
+            if (operator) {
+                compileBinaryOperator(operator, ops);
+            }
             ops.push(OP_SET, statement.name);
             return;
         }
@@ -509,6 +623,8 @@
                 sp--;
             } else if (op === OP_NEG) {
                 stack[sp - 1] = finite(-stack[sp - 1]);
+            } else if (op === OP_NOT) {
+                stack[sp - 1] = truthy(stack[sp - 1]) ? 0 : 1;
             } else if (op === OP_ADD) {
                 stack[sp - 2] = finite(stack[sp - 2] + stack[sp - 1]);
                 sp--;
@@ -538,6 +654,27 @@
                 if (!truthy(stack[--sp])) {
                     ip = target;
                 }
+            } else if (op === OP_ABOVE) {
+                stack[sp - 2] = stack[sp - 2] > stack[sp - 1] ? 1 : 0;
+                sp--;
+            } else if (op === OP_BELOW) {
+                stack[sp - 2] = stack[sp - 2] < stack[sp - 1] ? 1 : 0;
+                sp--;
+            } else if (op === OP_BAND) {
+                stack[sp - 2] = truthy(stack[sp - 2]) && truthy(stack[sp - 1]) ? 1 : 0;
+                sp--;
+            } else if (op === OP_BOR) {
+                stack[sp - 2] = truthy(stack[sp - 2]) || truthy(stack[sp - 1]) ? 1 : 0;
+                sp--;
+            } else if (op === OP_EQUAL) {
+                stack[sp - 2] = Math.abs((stack[sp - 2] || 0) - (stack[sp - 1] || 0)) < 0.00001 ? 1 : 0;
+                sp--;
+            } else if (op === OP_BITAND) {
+                stack[sp - 2] = Math.floor(stack[sp - 2] || 0) & Math.floor(stack[sp - 1] || 0);
+                sp--;
+            } else if (op === OP_BITOR) {
+                stack[sp - 2] = Math.floor(stack[sp - 2] || 0) | Math.floor(stack[sp - 1] || 0);
+                sp--;
             }
         }
         return scope;
@@ -783,23 +920,13 @@
         }
         if (node.type === "unary") {
             compileExpressionSlots(node.expression, ops, variableIndex);
-            ops.push(OP_NEG);
+            ops.push(node.operator === "!" ? OP_NOT : OP_NEG);
             return;
         }
         if (node.type === "binary") {
             compileExpressionSlots(node.left, ops, variableIndex);
             compileExpressionSlots(node.right, ops, variableIndex);
-            if (node.operator === "+") {
-                ops.push(OP_ADD);
-            } else if (node.operator === "-") {
-                ops.push(OP_SUB);
-            } else if (node.operator === "*") {
-                ops.push(OP_MUL);
-            } else if (node.operator === "/") {
-                ops.push(OP_DIV);
-            } else if (node.operator === "%") {
-                ops.push(OP_MOD);
-            }
+            compileBinaryOperator(node.operator, ops);
             return;
         }
         if (node.type === "call") {
@@ -919,7 +1046,14 @@
 
     function compileStatementSlots(statement, ops, variableIndex) {
         if (statement.type === "assignment") {
+            var operator = assignmentBinaryOperator(statement.operator);
+            if (operator) {
+                ops.push(OP_GET, variableIndex(statement.name));
+            }
             compileExpressionSlots(statement.expression, ops, variableIndex);
+            if (operator) {
+                compileBinaryOperator(operator, ops);
+            }
             ops.push(OP_SET, variableIndex(statement.name));
             return;
         }
@@ -945,6 +1079,10 @@
                     break;
                 case OP_NEG:
                     stack[sp - 1] = -stack[sp - 1];
+                    break;
+                case OP_NOT:
+                    var notValue = stack[sp - 1];
+                    stack[sp - 1] = notValue > 0.00001 || notValue < -0.00001 ? 0 : 1;
                     break;
                 case OP_ADD:
                     stack[sp - 2] = stack[sp - 2] + stack[sp - 1];
@@ -1044,6 +1182,14 @@
                     break;
                 case OP_EQUAL:
                     stack[sp - 2] = Math.abs((stack[sp - 2] || 0) - (stack[sp - 1] || 0)) < 0.00001 ? 1 : 0;
+                    sp--;
+                    break;
+                case OP_BITAND:
+                    stack[sp - 2] = Math.floor(stack[sp - 2] || 0) & Math.floor(stack[sp - 1] || 0);
+                    sp--;
+                    break;
+                case OP_BITOR:
+                    stack[sp - 2] = Math.floor(stack[sp - 2] || 0) | Math.floor(stack[sp - 1] || 0);
                     sp--;
                     break;
                 case OP_GETOSC1:

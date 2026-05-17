@@ -97,7 +97,22 @@ function testScalarRuntime(avsEel) {
         "aj=bitor(2,4);",
         "ak=bitand(7,3);",
         "al=invsqrt(4);",
-        "am=rand(4);"
+        "am=rand(4);",
+        "/* block comments should be ignored */",
+        "an=0x10;",
+        "an+=5;",
+        "ao=an>=21;",
+        "ap=an<=21;",
+        "aq=an!=20;",
+        "ar=!0;",
+        "as=(3>2)&&(1<2);",
+        "at=(0||5);",
+        "au=7&3;",
+        "av=2|4;",
+        "aw=10;aw-=3;",
+        "ax=2;ax*=4;",
+        "ay=9;ay/=3;",
+        "az=10;az%=4;"
     ].join("\n"));
 
     const scope = {};
@@ -143,14 +158,27 @@ function testScalarRuntime(avsEel) {
     if (scope.am < 0 || scope.am >= 4) {
         fail(`scalar rand: expected value in [0, 4), got ${scope.am}`);
     }
+    assertEqual(scope.an, 21, "scalar hex and add-assign");
+    assertEqual(scope.ao, 1, "scalar greater-equal");
+    assertEqual(scope.ap, 1, "scalar less-equal");
+    assertEqual(scope.aq, 1, "scalar not-equal");
+    assertEqual(scope.ar, 1, "scalar unary not");
+    assertEqual(scope.as, 1, "scalar logical and");
+    assertEqual(scope.at, 1, "scalar logical or");
+    assertEqual(scope.au, 3, "scalar bitwise and");
+    assertEqual(scope.av, 6, "scalar bitwise or");
+    assertEqual(scope.aw, 7, "scalar subtract-assign");
+    assertEqual(scope.ax, 8, "scalar multiply-assign");
+    assertEqual(scope.ay, 3, "scalar divide-assign");
+    assertEqual(scope.az, 2, "scalar modulo-assign");
 }
 
 function testSlotRuntime(avsEel) {
     const runtime = avsEel.compileSuite({
         init: "n=4;t=0;",
-        frame: "t=t+1;w=w/h;",
-        beat: "t=t+10;",
-        point: "i=i*2;x=sin(i)+pow(2,3);y=cos(i)+floor(1.8);red=below(i,1);green=above(i,.5)+bnot(1);blue=if(red,.25,.75)+bitand(7,3);"
+        frame: "t+=1;w=w/h;",
+        beat: "t+=10;",
+        point: "i=i*2;x=sin(i)+pow(2,3)+(0x4&7);y=cos(i)+floor(1.8)+(2|4);red=i<1;green=(i>.5)&&!0;blue=if(red,.25,.75)+bitand(7,3)+(i>=.5);"
     });
     const scope = runtime.createScope({ w: 1920, h: 1080 });
     const host = makeHost();
@@ -165,11 +193,11 @@ function testSlotRuntime(avsEel) {
 
     runtime.setSlot(scope, slots.i, 0.25);
     runtime.point.run(scope, host);
-    assertAlmost(runtime.getSlot(scope, slots.x), Math.sin(0.5) + 8, "slot point x");
-    assertAlmost(runtime.getSlot(scope, slots.y), Math.cos(0.5) + 1, "slot point y");
+    assertAlmost(runtime.getSlot(scope, slots.x), Math.sin(0.5) + 12, "slot point x");
+    assertAlmost(runtime.getSlot(scope, slots.y), Math.cos(0.5) + 7, "slot point y");
     assertEqual(runtime.getSlot(scope, slots.red), 1, "slot point red");
     assertEqual(runtime.getSlot(scope, slots.green), 0, "slot point green");
-    assertEqual(runtime.getSlot(scope, slots.blue), 3.25, "slot point blue");
+    assertEqual(runtime.getSlot(scope, slots.blue), 4.25, "slot point blue");
 }
 
 function testNeonCoaster(context) {
