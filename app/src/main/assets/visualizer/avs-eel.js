@@ -63,6 +63,7 @@
     var OP_BITOR = 31;
     var OP_BITAND = 32;
     var OP_GETSPEC1 = 33;
+    var OP_GETSPEC3 = 34;
 
     var FN_IF = 1;
     var FN_SIN = 2;
@@ -1052,6 +1053,13 @@
             ops.push(OP_GETOSC1);
             return true;
         }
+        if (node.name === "getspec" && node.args.length >= 3) {
+            compileExpressionSlots(node.args[0], ops, variableIndex);
+            compileExpressionSlots(node.args[1], ops, variableIndex);
+            compileExpressionSlots(node.args[2], ops, variableIndex);
+            ops.push(OP_GETSPEC3);
+            return true;
+        }
         if (node.name === "getspec" && node.args.length === 1) {
             compileExpressionSlots(node.args[0], ops, variableIndex);
             ops.push(OP_GETSPEC1);
@@ -1213,6 +1221,10 @@
                     break;
                 case OP_GETSPEC1:
                     stack[sp - 1] = readSpec(host, stack[sp - 1] || 0, 0, 0);
+                    break;
+                case OP_GETSPEC3:
+                    stack[sp - 3] = readSpec(host, stack[sp - 3] || 0, stack[sp - 2] || 0, stack[sp - 1] || 0);
+                    sp -= 2;
                     break;
             }
         }
