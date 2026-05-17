@@ -5,17 +5,21 @@ import android.app.Activity;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 
+import java.util.Locale;
+
 public class VisualizerActivity extends Activity {
     private static final String TAG = "BRAVIAVisualizer";
     private static final int REQUEST_RECORD_AUDIO = 42;
     private static final String PREFS_NAME = "launcher_preferences";
     private static final String PREF_VISUALIZER_ENGINE = "visualizer_engine";
+    private static final String DEBUG_RENDER_SCALE_SETTING = "bravia_visualizer_render_scale";
     private static final String ENGINE_LEGACY = "legacy";
     private static final String ENGINE_BUTTERCHURN = "butterchurn";
     private static final String ENGINE_TUNNEL_3D = "tunnel3d";
@@ -43,7 +47,7 @@ public class VisualizerActivity extends Activity {
         String engine = requestedEngine();
         if (ENGINE_TUNNEL_3D.equals(engine)
                 && !ButterchurnVisualizerHost.isDisabledForProcess()) {
-            butterchurnHost = new ButterchurnVisualizerHost(this, TUNNEL_START_URL, ENGINE_TUNNEL_3D);
+            butterchurnHost = new ButterchurnVisualizerHost(this, tunnelStartUrl(), ENGINE_TUNNEL_3D);
             setContentView(butterchurnHost);
             butterchurnHost.start();
         } else if (ENGINE_BUTTERCHURN.equals(engine)
@@ -161,6 +165,34 @@ public class VisualizerActivity extends Activity {
 
     private boolean isDebugBuild() {
         return (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+    }
+
+    private String tunnelStartUrl() {
+        float renderScale = requestedRenderScale();
+        if (renderScale <= 0f) {
+            return TUNNEL_START_URL;
+        }
+        return TUNNEL_START_URL + String.format(Locale.US, "?renderScale=%.2f", renderScale);
+    }
+
+    private float requestedRenderScale() {
+        if (!isDebugBuild()) {
+            return 0f;
+        }
+        try {
+            float scale = Settings.Global.getFloat(
+                    getContentResolver(),
+                    DEBUG_RENDER_SCALE_SETTING,
+                    0f
+            );
+            if (scale <= 0f) {
+                return 0f;
+            }
+            return Math.max(0.5f, Math.min(2f, scale));
+        } catch (Exception exception) {
+            Log.w(TAG, "Ignoring render scale override", exception);
+            return 0f;
+        }
     }
 
     private void showLegacyVisualizer() {

@@ -27,6 +27,8 @@
     var avsFramebufferState = null;
     var running = false;
     var paused = false;
+    var renderScaleOverride = readRenderScaleOverride();
+    var lastReportedRenderScale = 0;
     var lastFrameAt = 0;
     var metricsStartAt = 0;
     var warmupUntil = 0;
@@ -481,6 +483,36 @@
             }
         } catch (ignored) {
         }
+    }
+
+    function parseScaleValue(value) {
+        var scale = Number(value);
+        if (!isFinite(scale) || scale <= 0) {
+            return 0;
+        }
+        return Math.max(0.5, Math.min(2, scale));
+    }
+
+    function readRenderScaleOverride() {
+        try {
+            if (window.location && window.location.search) {
+                var params = new URLSearchParams(window.location.search);
+                var scale = parseScaleValue(params.get("renderScale"));
+                if (scale > 0) {
+                    return scale;
+                }
+            }
+        } catch (ignored) {
+        }
+        return 0;
+    }
+
+    function currentRenderScale() {
+        var baseScale = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        if (renderScaleOverride > 0) {
+            return Math.max(0.5, Math.min(4, baseScale * renderScaleOverride));
+        }
+        return baseScale;
     }
 
     function setPresetOverlayVisible(visible) {
@@ -2583,7 +2615,7 @@
     }
 
     function resize() {
-        var ratio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        var ratio = currentRenderScale();
         var width = Math.max(320, Math.floor(window.innerWidth * ratio));
         var height = Math.max(180, Math.floor(window.innerHeight * ratio));
         if (canvas.width !== width || canvas.height !== height) {
@@ -2596,6 +2628,10 @@
             if (gl) {
                 gl.viewport(0, 0, width, height);
             }
+        }
+        if (Math.abs(lastReportedRenderScale - ratio) > 0.001) {
+            lastReportedRenderScale = ratio;
+            safeBridge("reportEvent", "visualizer_render_scale_" + ratio.toFixed(2));
         }
         if (coasterCanvas) {
             var coasterScale = Math.min(1, coasterMaxWidth / width, coasterMaxHeight / height);
