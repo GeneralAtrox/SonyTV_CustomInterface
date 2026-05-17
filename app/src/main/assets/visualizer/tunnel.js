@@ -604,6 +604,7 @@
         + "uniform float u_invert;\n"
         + "uniform float u_blend;\n"
         + "uniform float u_blendAverage;\n"
+        + "uniform float u_currentDepthSource;\n"
         + "out vec4 outColor;\n"
         + "vec3 clampColor(vec3 value) {\n"
         + "    return clamp(value, vec3(0.0), vec3(1.0));\n"
@@ -625,6 +626,10 @@
         + "    float right = depthOf(v_uv + vec2(texel.x, 0.0));\n"
         + "    float up = depthOf(v_uv - vec2(0.0, texel.y));\n"
         + "    float down = depthOf(v_uv + vec2(0.0, texel.y));\n"
+        + "    if (u_currentDepthSource > 0.5 && max(max(left, right), max(up, down)) <= 0.0) {\n"
+        + "        outColor = vec4(0.0, 0.0, 0.0, source.a);\n"
+        + "        return;\n"
+        + "    }\n"
         + "    float lx = pixel.x - u_light.x;\n"
         + "    float ly = pixel.y - u_light.y;\n"
         + "    float cx = 127.0 - abs((right - left) - lx);\n"
@@ -1323,6 +1328,9 @@
             green: 0,
             blue: 0,
             alpha: 1,
+            bi: 1,
+            isbeat: 1,
+            islbeat: 1,
             beatAverage: 0.18,
             lastBeatAt: 0
         };
@@ -1331,7 +1339,8 @@
     function createAvsEelRenderer(kind, settings, sampleCount, drawMode, lineMode, colors, texer) {
         var suite = avsEel.compileSuite(settings.eel || {});
         var scope = suite.createScope(createAvsInitialState(sampleCount));
-        var slots = suite.slots(["n", "w", "h", "i", "x", "y", "r", "d", "b", "red", "green", "blue", "alpha"]);
+        var slots = suite.slots(["n", "w", "h", "i", "x", "y", "r", "d", "b", "bi",
+            "isbeat", "islbeat", "red", "green", "blue", "alpha"]);
         suite.init.run(scope, avsEelHost());
         sampleCount = normalizeAvsSampleCount(suite.getSlot(scope, slots.n), sampleCount);
         return {
@@ -2030,6 +2039,7 @@
             };
         }
         var bumpState = renderer.bumpState;
+        var wasLongBeat = bumpState.framesRemaining > 0;
         var baseDepth = settings.depth == null ? 30 : settings.depth;
         var beatDepth = settings.beatDepth == null ? 100 : settings.beatDepth;
         var durationFrames = Math.max(1, Math.round(settings.durationFrames == null
@@ -2046,6 +2056,8 @@
             if (!prepareAvsFrameProgram(renderer, isBeat)) {
                 return;
             }
+            renderer.suite.setSlot(renderer.scope, renderer.slots.isbeat, isBeat ? -1 : 1);
+            renderer.suite.setSlot(renderer.scope, renderer.slots.islbeat, wasLongBeat ? -1 : 1);
             bumpState.x = renderer.slots.x >= 0 ? renderer.suite.getSlot(renderer.scope, renderer.slots.x) || 0 : bumpState.x;
             bumpState.y = renderer.slots.y >= 0 ? renderer.suite.getSlot(renderer.scope, renderer.slots.y) || 0 : bumpState.y;
         } else {
@@ -2055,7 +2067,13 @@
         }
         var lightX = clamp(settings.oldStyle ? bumpState.x / 100 : bumpState.x, 0, 1) * state.width;
         var lightY = clamp(settings.oldStyle ? bumpState.y / 100 : bumpState.y, 0, 1) * state.height;
-        var depth = clamp(bumpState.currentDepth, 0, 100) * 2.56;
+        var depthValue = bumpState.currentDepth;
+        if (renderer.suite && renderer.scope && renderer.slots && renderer.slots.bi >= 0) {
+            var bi = clamp(renderer.suite.getSlot(renderer.scope, renderer.slots.bi), 0, 1);
+            renderer.suite.setSlot(renderer.scope, renderer.slots.bi, bi);
+            depthValue *= bi;
+        }
+        var depth = clamp(depthValue, 0, 100) * 2.56;
 
         var depthTarget = settings.bufferNumber > 0
                 ? ensureAvsGlobalBuffer(settings.bufferNumber - 1, false)
@@ -2077,6 +2095,7 @@
         gl.uniform1f(avsBumpLocations.invert, settings.invert ? 1 : 0);
         gl.uniform1f(avsBumpLocations.blend, settings.blend ? 1 : 0);
         gl.uniform1f(avsBumpLocations.blendAverage, settings.blendAverage ? 1 : 0);
+        gl.uniform1f(avsBumpLocations.currentDepthSource, depthTarget === state.front ? 1 : 0);
         gl.disable(gl.BLEND);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
         gl.activeTexture(gl.TEXTURE1);
@@ -4039,6 +4058,7 @@
         avsBumpLocations.invert = gl.getUniformLocation(avsBumpProgram, "u_invert");
         avsBumpLocations.blend = gl.getUniformLocation(avsBumpProgram, "u_blend");
         avsBumpLocations.blendAverage = gl.getUniformLocation(avsBumpProgram, "u_blendAverage");
+        avsBumpLocations.currentDepthSource = gl.getUniformLocation(avsBumpProgram, "u_currentDepthSource");
     }
 
     function initLocations() {
