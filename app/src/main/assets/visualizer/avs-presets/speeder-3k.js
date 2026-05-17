@@ -245,7 +245,7 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
                     "opaque": false,
                     "settings": {
                         "colorRaw": 32767,
-                        "colorHex": "#007fff",
+                        "colorHex": "#ff7f00",
                         "marker": 1,
                         "eel": {
                             "point": "y=y-.045"
@@ -474,7 +474,7 @@ window.braviaAvsPresetDefinitions["speeder3K"] = {
             "opaque": false,
             "settings": {
                 "colorRaw": 32767,
-                "colorHex": "#007fff",
+                "colorHex": "#ff7f00",
                 "marker": 1,
                 "eel": {
                     "point": "d=0;"

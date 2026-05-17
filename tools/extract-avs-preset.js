@@ -195,7 +195,12 @@ function stripRuntimeIrrelevantEel(text) {
 }
 
 function colorToHex(color) {
-    return "#" + (color & 0xffffff).toString(16).padStart(6, "0");
+    const red = color & 0xff;
+    const green = (color >>> 8) & 0xff;
+    const blue = (color >>> 16) & 0xff;
+    return "#" + [red, green, blue]
+            .map((component) => component.toString(16).padStart(2, "0"))
+            .join("");
 }
 
 function previewText(buffer, maxLength = 80) {
@@ -399,6 +404,24 @@ function decodeScatter(config) {
     };
 }
 
+function decodeColorFade(config) {
+    const faders = [
+        readInt32At(config, 4, 8),
+        readInt32At(config, 8, -8),
+        readInt32At(config, 12, -8)
+    ];
+    return {
+        enabled: readInt32At(config, 0, 1),
+        faders,
+        beatFaders: [
+            readInt32At(config, 16, faders[0]),
+            readInt32At(config, 20, faders[1]),
+            readInt32At(config, 24, faders[2])
+        ],
+        ints: previewInts(config)
+    };
+}
+
 function decodeEelBlockConfig(config) {
     const settings = {
         marker: config.length > 0 ? config[0] : 0,
@@ -498,7 +521,7 @@ function decodeEffectSettings(effectId, config) {
         return decodeIntegerConfig(config, ["mode", "flags"]);
     }
     if (effectId === 6) {
-        return decodeIntegerConfig(config, ["mode"]);
+        return decodeColorFade(config);
     }
     if (effectId === 15) {
         return decodeDotFountain(config);

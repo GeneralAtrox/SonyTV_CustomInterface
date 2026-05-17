@@ -294,7 +294,7 @@ window.braviaAvsPresetDefinitions["zeroGMazeIII"] = {
                             "opaque": false,
                             "settings": {
                                 "colorRaw": 32767,
-                                "colorHex": "#007fff",
+                                "colorHex": "#ff7f00",
                                 "marker": 1,
                                 "eel": {
                                     "point": "y=0"
@@ -463,7 +463,7 @@ window.braviaAvsPresetDefinitions["zeroGMazeIII"] = {
             "opaque": false,
             "settings": {
                 "colorRaw": 32767,
-                "colorHex": "#007fff",
+                "colorHex": "#ff7f00",
                 "marker": 1,
                 "eel": {
                     "point": "x=0;y=0"

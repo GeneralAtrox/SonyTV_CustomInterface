@@ -201,7 +201,17 @@ window.braviaAvsPresetDefinitions["containment"] = {
                     "configLength": 4,
                     "opaque": false,
                     "settings": {
-                        "mode": 2,
+                        "enabled": 2,
+                        "faders": [
+                            8,
+                            -8,
+                            -8
+                        ],
+                        "beatFaders": [
+                            8,
+                            -8,
+                            -8
+                        ],
                         "ints": [
                             2
                         ]
@@ -226,7 +236,7 @@ window.braviaAvsPresetDefinitions["containment"] = {
                         "colors": [
                             {
                                 "raw": 9828147,
-                                "hex": "#95f733"
+                                "hex": "#33f795"
                             }
                         ],
                         "eel": {
@@ -256,7 +266,7 @@ window.braviaAvsPresetDefinitions["containment"] = {
                         "colors": [
                             {
                                 "raw": 16333361,
-                                "hex": "#f93a31"
+                                "hex": "#313af9"
                             }
                         ],
                         "eel": {
@@ -385,7 +395,7 @@ window.braviaAvsPresetDefinitions["containment"] = {
             "opaque": false,
             "settings": {
                 "colorRaw": 32767,
-                "colorHex": "#007fff",
+                "colorHex": "#ff7f00",
                 "marker": 1,
                 "eel": {
                     "point": "x=r*.318;y=d;"
@@ -716,7 +726,7 @@ window.braviaAvsPresetDefinitions["containment"] = {
         "colors": [
             {
                 "raw": 9828147,
-                "hex": "#95f733"
+                "hex": "#33f795"
             }
         ],
         "eel": {

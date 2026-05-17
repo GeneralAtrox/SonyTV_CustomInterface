@@ -31,6 +31,8 @@
     var avsWarpMap = new Float32Array(33 * 33 * 3);
     var avsFeedbackProgram = null;
     var avsFeedbackLocations = {};
+    var avsColorFadeProgram = null;
+    var avsColorFadeLocations = {};
     var avsFramebufferState = null;
     var running = false;
     var paused = false;
@@ -547,9 +549,11 @@
         + "        vec2 direction = centered / radius / aspect;\n"
         + "        uv += direction * wave * u_amount * (0.012 + u_audio.y * 0.006);\n"
         + "    } else if (u_mode < 2.5) {\n"
-        + "        vec2 cell = floor(uv * u_resolution / 6.0);\n"
-        + "        vec2 jitter = vec2(hash(cell + u_time), hash(cell + 17.0 + u_time)) - 0.5;\n"
-        + "        uv += jitter * u_amount * 7.5 / max(u_resolution, vec2(1.0));\n"
+        + "        vec2 pixel = floor(uv * u_resolution);\n"
+        + "        if (pixel.y >= 4.0 && pixel.y < u_resolution.y - 4.0) {\n"
+        + "            vec2 randomOffset = floor(vec2(hash(pixel + u_time), hash(pixel + 17.0 + u_time)) * 7.0) - 3.0;\n"
+        + "            uv = (pixel + randomOffset * max(0.0, u_amount) + 0.5) / max(u_resolution, vec2(1.0));\n"
+        + "        }\n"
         + "    } else {\n"
         + "        float pulse = 1.0 + u_amount * (0.012 + u_audio.x * 0.008);\n"
         + "        float turn = u_amount * 0.006 * sin(u_time * 0.7);\n"
@@ -557,6 +561,34 @@
         + "        uv = ((rotation * ((uv - 0.5) / pulse)) + 0.5);\n"
         + "    }\n"
         + "    outColor = texture(u_texture, clamp(uv, vec2(0.0), vec2(1.0)));\n"
+        + "}\n";
+
+    var avsColorFadeFragmentSource = "#version 300 es\n"
+        + "precision highp float;\n"
+        + "in vec2 v_uv;\n"
+        + "uniform sampler2D u_texture;\n"
+        + "uniform vec3 u_faders;\n"
+        + "out vec4 outColor;\n"
+        + "void main() {\n"
+        + "    vec4 source = texture(u_texture, v_uv);\n"
+        + "    vec3 rgb = source.rgb * 255.0;\n"
+        + "    float r = rgb.r;\n"
+        + "    float g = rgb.g;\n"
+        + "    float b = rgb.b;\n"
+        + "    float fs1 = u_faders.x;\n"
+        + "    float fs2 = u_faders.y;\n"
+        + "    float fs3 = u_faders.z;\n"
+        + "    vec3 delta;\n"
+        + "    if (g > b && g > r) {\n"
+        + "        delta = vec3(fs3, fs2, fs1);\n"
+        + "    } else if (r > b && r > g) {\n"
+        + "        delta = vec3(fs2, fs1, fs3);\n"
+        + "    } else if (b > g && b > r) {\n"
+        + "        delta = vec3(fs1, fs3, fs2);\n"
+        + "    } else {\n"
+        + "        delta = vec3(fs3);\n"
+        + "    }\n"
+        + "    outColor = vec4(clamp(rgb + delta, 0.0, 255.0) / 255.0, source.a);\n"
         + "}\n";
 
     var locations = {};
@@ -782,6 +814,32 @@
         return weightSum > 0 ? sum / weightSum : 0;
     }
 
+    function avsSpectrumByte(index, maxIndex, channel) {
+        var position = maxIndex <= 0 ? 0 : index / maxIndex;
+        return clamp(Math.round(getSpec(position, 0.003, channel) * 255), 0, 255);
+    }
+
+    function avsWaveSigned(index, maxIndex, channel) {
+        var position = maxIndex <= 0 ? 0 : index / maxIndex;
+        return clamp(getOsc(position), -1, 1);
+    }
+
+    function interpolateAvsSpectrumByte(position, maxIndex, channel) {
+        var left = Math.floor(position);
+        var amount = position - left;
+        var right = Math.min(maxIndex, left + 1);
+        return avsSpectrumByte(left, maxIndex, channel) * (1 - amount)
+                + avsSpectrumByte(right, maxIndex, channel) * amount;
+    }
+
+    function interpolateAvsWaveSigned(position, maxIndex, channel) {
+        var left = Math.floor(position);
+        var amount = position - left;
+        var right = Math.min(maxIndex, left + 1);
+        return avsWaveSigned(left, maxIndex, channel) * (1 - amount)
+                + avsWaveSigned(right, maxIndex, channel) * amount;
+    }
+
     function defaultAvsLineMode() {
         return {
             blendMode: "replace",
@@ -885,6 +943,7 @@
 
     function ensureAvsFramebuffers() {
         if (!gl || !avsCopyProgram || !avsBlendProgram || !avsWarpProgram || !avsFeedbackProgram
+                || !avsColorFadeProgram
                 || !quadBuffer || !avsWarpBuffer
                 || canvas.width <= 0 || canvas.height <= 0) {
             return null;
@@ -1477,6 +1536,46 @@
         return ((color >>> shift) & 0xff) / 255;
     }
 
+    function avsRawRed(color) {
+        return avsColorComponent(color, 0);
+    }
+
+    function avsRawGreen(color) {
+        return avsColorComponent(color, 8);
+    }
+
+    function avsRawBlue(color) {
+        return avsColorComponent(color, 16);
+    }
+
+    function avsWriteRawColor(pointValue, color, alpha) {
+        pointValue[2] = avsRawRed(color);
+        pointValue[3] = avsRawGreen(color);
+        pointValue[4] = avsRawBlue(color);
+        pointValue[5] = alpha;
+    }
+
+    function nextAvsRendererColor(renderer, fallbackColor) {
+        var colors = renderer.colors || [];
+        if (colors.length === 0) {
+            return fallbackColor == null ? 0xffffff : fallbackColor;
+        }
+        renderer.colorPosition = ((renderer.colorPosition || 0) + 1) % Math.max(1, colors.length * 64);
+        var colorIndex = Math.floor(renderer.colorPosition / 64);
+        var amount = renderer.colorPosition & 63;
+        var first = colors[colorIndex] && colors[colorIndex].raw != null
+                ? colors[colorIndex].raw
+                : (fallbackColor == null ? 0xffffff : fallbackColor);
+        var secondIndex = colorIndex + 1 < colors.length ? colorIndex + 1 : 0;
+        var second = colors[secondIndex] && colors[secondIndex].raw != null
+                ? colors[secondIndex].raw
+                : first;
+        var red = (((first & 255) * (63 - amount)) + ((second & 255) * amount)) / 64;
+        var green = ((((first >>> 8) & 255) * (63 - amount)) + (((second >>> 8) & 255) * amount)) / 64;
+        var blue = ((((first >>> 16) & 255) * (63 - amount)) + (((second >>> 16) & 255) * amount)) / 64;
+        return (Math.round(red) & 255) | ((Math.round(green) & 255) << 8) | ((Math.round(blue) & 255) << 16);
+    }
+
     function readAvsStackPoint(renderer, out, base) {
         var suite = renderer.suite;
         var scope = renderer.scope;
@@ -1503,9 +1602,9 @@
             out[4] = clamp(suite.getSlot(scope, slots.blue) || 0, 0, 1);
         } else if (renderer.colors.length > 0) {
             var color = renderer.colors[0].raw == null ? 0xffffff : renderer.colors[0].raw;
-            out[2] = avsColorComponent(color, 16);
-            out[3] = avsColorComponent(color, 8);
-            out[4] = avsColorComponent(color, 0);
+            out[2] = avsRawRed(color);
+            out[3] = avsRawGreen(color);
+            out[4] = avsRawBlue(color);
         } else {
             out[2] = 1;
             out[3] = 1;
@@ -1535,7 +1634,7 @@
             return;
         }
         if (renderer.kind === "colorFade") {
-            renderAvsColorFade(renderer);
+            renderAvsColorFade(renderer, isBeat);
             return;
         }
         if (renderer.kind === "bump") {
@@ -1695,18 +1794,101 @@
         bindAvsLineTarget(avsFramebufferState.front);
     }
 
-    function renderAvsColorFade(renderer) {
-        var mode = renderer.settings ? renderer.settings.mode : 0;
-        var alpha = mode === 1 ? 0.10 : (mode === 2 ? 0.16 : 0.07);
-        drawAvsBlackFade(alpha);
+    function avsColorFadeArray(value, fallback) {
+        var output = fallback.slice(0, 3);
+        if (value && value.length >= 3) {
+            output[0] = Math.round(value[0]);
+            output[1] = Math.round(value[1]);
+            output[2] = Math.round(value[2]);
+        }
+        return output;
+    }
+
+    function avsRandomInt(range) {
+        return Math.floor(Math.random() * Math.max(1, range));
+    }
+
+    function nextAvsColorFadeFaders(renderer, isBeat) {
+        var settings = renderer.settings || {};
+        var enabled = Math.round(settings.enabled == null
+                ? (settings.mode == null ? 1 : settings.mode)
+                : settings.enabled);
+        if (!enabled) {
+            return null;
+        }
+        var faders = avsColorFadeArray(settings.faders, [8, -8, -8]);
+        var beatFaders = avsColorFadeArray(settings.beatFaders, faders);
+        if (!renderer.faderPosition) {
+            renderer.faderPosition = faders.slice(0, 3);
+        }
+        var position = renderer.faderPosition;
+        if (position[0] < faders[0]) {
+            position[0]++;
+        }
+        if (position[1] < faders[2]) {
+            position[1]++;
+        }
+        if (position[2] < faders[1]) {
+            position[2]++;
+        }
+        if (position[0] > faders[0]) {
+            position[0]--;
+        }
+        if (position[1] > faders[2]) {
+            position[1]--;
+        }
+        if (position[2] > faders[1]) {
+            position[2]--;
+        }
+
+        if (!(enabled & 4)) {
+            position[0] = faders[0];
+            position[1] = faders[1];
+            position[2] = faders[2];
+        } else if (isBeat && (enabled & 2)) {
+            position[0] = avsRandomInt(32) - 6;
+            position[1] = avsRandomInt(64) - 32;
+            if (position[1] < 0 && position[1] > -16) {
+                position[1] = -32;
+            }
+            if (position[1] >= 0 && position[1] < 16) {
+                position[1] = 32;
+            }
+            position[2] = avsRandomInt(32) - 6;
+        } else if (isBeat) {
+            position[0] = beatFaders[0];
+            position[1] = beatFaders[1];
+            position[2] = beatFaders[2];
+        }
+        return position;
+    }
+
+    function renderAvsColorFade(renderer, isBeat) {
+        var state = ensureAvsFramebuffers();
+        var faders = nextAvsColorFadeFaders(renderer, isBeat);
+        if (!state || !faders) {
+            return;
+        }
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, state.scratch.framebuffer);
+        gl.viewport(0, 0, state.scratch.width, state.scratch.height);
+        gl.useProgram(avsColorFadeProgram);
+        bindAvsQuad(avsColorFadeLocations.position);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, state.front.texture);
+        gl.uniform1i(avsColorFadeLocations.texture, 0);
+        gl.uniform3f(avsColorFadeLocations.faders, faders[0], faders[1], faders[2]);
+        gl.disable(gl.BLEND);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        swapAvsFramebuffers();
+        bindAvsLineTarget(avsFramebufferState.front);
     }
 
     function drawAvsColorWash(color, alpha, blendMode) {
         if (alpha <= 0) {
             return;
         }
-        setAvsFadeColor(avsColorComponent(color, 16), avsColorComponent(color, 8),
-                avsColorComponent(color, 0), clamp(alpha, 0, 1));
+        setAvsFadeColor(avsRawRed(color), avsRawGreen(color), avsRawBlue(color), clamp(alpha, 0, 1));
         gl.bufferData(gl.ARRAY_BUFFER, avsFadeVertices, gl.STATIC_DRAW);
         gl.enable(gl.BLEND);
         gl.blendEquation(gl.FUNC_ADD);
@@ -1725,9 +1907,13 @@
         }
         renderer.hasRendered = true;
         var color = settings.colorRaw == null ? 0 : settings.colorRaw;
-        var additive = settings.blend === 1 || settings.blend === 2;
-        var alpha = additive ? 0.014 : (settings.blendAverage ? 0.24 : 0.86);
-        drawAvsColorWash(color, alpha, additive ? "additive" : "replace");
+        if (settings.blend === 1 || settings.blend === 2) {
+            drawAvsColorWash(color, 1, "additive");
+        } else if (settings.blendAverage) {
+            drawAvsColorWash(color, 0.5, "replace");
+        } else {
+            drawAvsColorWash(color, 1, "replace");
+        }
     }
 
     function renderAvsVideoDelay(renderer, isBeat) {
@@ -1764,25 +1950,8 @@
         if (renderer.settings && renderer.settings.enabled === 0) {
             return;
         }
-        applyAvsFeedbackPass(2, 0.40 + audio.treb * 0.35, visualTimeSeconds * 0.83 + (renderer.seed || 0));
-        var count = 70;
-        ensureAvsStackVertexCapacity(count, 6);
-        var vertexCount = 0;
-        var current = avsStackPointScratch;
-        renderer.seed = wrap01((renderer.seed || 0.37) + 0.019 + audio.treb * 0.006);
-        for (var index = 0; index < count; index++) {
-            var position = wrap01(renderer.seed + index * 0.61803398875);
-            var angle = wrap01(position * 12.9898 + visualTimeSeconds * 0.021) * Math.PI * 2;
-            var radius = Math.sqrt(wrap01(position * 78.233 + renderer.seed)) * 1.35;
-            current[0] = Math.cos(angle) * radius;
-            current[1] = Math.sin(angle) * radius * canvas.width / Math.max(1, canvas.height);
-            current[2] = 0.02;
-            current[3] = 0.72 + audio.mid * 0.16;
-            current[4] = 0.88 + audio.treb * 0.10;
-            current[5] = 0.08 + audio.rms * 0.10;
-            vertexCount = addAvsStackPointTo(avsStackVertices, vertexCount, current, 1, null);
-        }
-        drawAvsVertices(avsStackVertices, vertexCount, "additive");
+        renderer.seed = wrap01((renderer.seed || 0.37) + 0.173);
+        applyAvsFeedbackPass(2, 1, visualTimeSeconds * 59.0 + renderer.seed * 997.0);
     }
 
     function renderAvsBump(renderer, isBeat) {
@@ -1848,9 +2017,9 @@
             var position = index / Math.max(1, sampleCount - 1);
             current[0] = position * 2 - 1;
             current[1] = getOsc(position) * (0.55 + audio.rms * 0.35);
-            current[2] = avsColorComponent(color, 16);
-            current[3] = avsColorComponent(color, 8);
-            current[4] = avsColorComponent(color, 0);
+            current[2] = avsRawRed(color);
+            current[3] = avsRawGreen(color);
+            current[4] = avsRawBlue(color);
             current[5] = 0.62 + audio.rms * 0.24;
             if (hasPrevious) {
                 vertexCount = addAvsSegmentTo(avsStackVertices, vertexCount, previous, current,
@@ -1864,44 +2033,98 @@
 
     function renderAvsSimpleRenderer(renderer) {
         var settings = renderer.settings || {};
-        var sampleCount = renderer.sampleCount || 128;
         var renderMode = settings.renderMode || "solidAnalyzer";
-        var source = settings.source || (renderMode.indexOf("Scope") >= 0 ? "waveform" : "spectrum");
-        var color = renderer.colors && renderer.colors.length > 0 ? renderer.colors[0].raw : 0xffffff;
-        var lineWidth = Math.max(1, Math.min(2, renderer.lineMode && renderer.lineMode.lineWidth
+        var color = nextAvsRendererColor(renderer, 0xffffff);
+        var lineWidth = Math.max(1, Math.min(64, renderer.lineMode && renderer.lineMode.lineWidth
                 ? renderer.lineMode.lineWidth
-                : 2));
-        ensureAvsStackVertexCapacity(sampleCount, 12);
+                : 1));
+        var width = Math.max(1, avsFramebufferState ? avsFramebufferState.width : canvas.width);
+        var height = Math.max(1, avsFramebufferState ? avsFramebufferState.height : canvas.height);
+        var yscale = height / 512;
+        var yPosition = Math.round(settings.yPosition || 0);
+        var sourceChannel = settings.channel || "center";
+        var modeId = Math.round(settings.renderModeId || 0);
+        var sampleCount = modeId === 1 ? 200 : (modeId === 2 ? 288 : width);
+        ensureAvsStackVertexCapacity(Math.max(width, sampleCount), 12);
         var vertexCount = 0;
-        var previous = avsStackPreviousScratch;
-        var current = avsStackPointScratch;
-        var hasPrevious = false;
-        for (var index = 0; index < sampleCount; index++) {
-            var position = index / Math.max(1, sampleCount - 1);
-            var value = source === "spectrum"
-                    ? getSpec(position, 0.012, settings.channel)
-                    : getOsc(position);
-            var baselineY = settings.yPosition === 0 ? 0.54 : (settings.yPosition === 1 ? 0 : -0.08);
-            var magnitude = source === "spectrum" ? Math.min(1, value * 0.82) : value * 0.58;
-            current[0] = position * 2 - 1;
-            current[1] = baselineY + magnitude * (renderMode.indexOf("Analyzer") >= 0 ? 0.52 : 0.34);
-            current[2] = avsColorComponent(color, 16);
-            current[3] = avsColorComponent(color, 8);
-            current[4] = avsColorComponent(color, 0);
-            current[5] = 0.20 + Math.min(0.22, Math.abs(value) * 0.38 + audio.rms * 0.12);
-            if (renderMode.indexOf("solid") === 0) {
-                previous[0] = current[0];
-                previous[1] = baselineY;
-                previous[2] = current[2];
-                previous[3] = current[3];
-                previous[4] = current[4];
-                previous[5] = current[5] * 0.55;
-                vertexCount = addAvsSegmentTo(avsStackVertices, vertexCount, previous, current, lineWidth);
-            } else if (hasPrevious) {
-                vertexCount = addAvsSegmentTo(avsStackVertices, vertexCount, previous, current, lineWidth);
+        var h2 = height / 2;
+        var ys = yscale;
+        var adj = 1;
+        if (yPosition !== 1) {
+            ys = -ys;
+            adj = 0;
+        }
+        if (yPosition === 2) {
+            h2 -= ys * 128;
+        }
+
+        if (settings.dots) {
+            if ((modeId & 2) === 2) {
+                var dotScopeY = yPosition === 2 ? height / 4 : yPosition * height / 2;
+                for (var dotScopeX = 0; dotScopeX < width; dotScopeX++) {
+                    var dotScopeRead = dotScopeX * 288 / width;
+                    var dotScopeValue = interpolateAvsWaveSigned(dotScopeRead, 287, sourceChannel);
+                    vertexCount = addAvsPixelPointTo(avsStackVertices, vertexCount, dotScopeX,
+                            dotScopeY + dotScopeValue * height / 4, color, 1, lineWidth);
+                }
+            } else {
+                for (var dotAnalyzerX = 0; dotAnalyzerX < width; dotAnalyzerX++) {
+                    var dotAnalyzerRead = dotAnalyzerX * 200 / width;
+                    var dotAnalyzerValue = interpolateAvsSpectrumByte(dotAnalyzerRead, 200, sourceChannel);
+                    vertexCount = addAvsPixelPointTo(avsStackVertices, vertexCount, dotAnalyzerX,
+                            h2 + adj + dotAnalyzerValue * ys - 1, color, 1, lineWidth);
+                }
             }
-            copyAvsPoint(current, previous);
-            hasPrevious = true;
+            drawAvsVertices(avsStackVertices, vertexCount, renderer.lineMode.blendMode);
+            return;
+        }
+
+        if (modeId === 0) {
+            for (var solidAnalyzerX = 0; solidAnalyzerX < width; solidAnalyzerX++) {
+                var solidAnalyzerRead = solidAnalyzerX * 200 / width;
+                var solidAnalyzerValue = interpolateAvsSpectrumByte(solidAnalyzerRead, 200, sourceChannel);
+                vertexCount = addAvsPixelSegmentTo(avsStackVertices, vertexCount,
+                        solidAnalyzerX, h2 - adj,
+                        solidAnalyzerX, h2 + adj + solidAnalyzerValue * ys - 1,
+                        color, 1, lineWidth);
+            }
+        } else if (modeId === 1) {
+            var analyzerXs = width / 200;
+            var lastAnalyzerX = 0;
+            var lastAnalyzerY = h2 + avsSpectrumByte(0, 200, sourceChannel) * ys;
+            for (var analyzerIndex = 1; analyzerIndex < 200; analyzerIndex++) {
+                var analyzerX = analyzerIndex * analyzerXs;
+                var analyzerY = h2 + avsSpectrumByte(analyzerIndex, 200, sourceChannel) * ys;
+                vertexCount = addAvsPixelSegmentTo(avsStackVertices, vertexCount,
+                        lastAnalyzerX, lastAnalyzerY, analyzerX, analyzerY,
+                        color, 1, lineWidth);
+                lastAnalyzerX = analyzerX;
+                lastAnalyzerY = analyzerY;
+            }
+        } else if (modeId === 2) {
+            var scopeY = yPosition === 2 ? height / 4 : yPosition * height / 2;
+            var lastScopeX = 0;
+            var lastScopeY = scopeY + avsWaveSigned(0, 287, sourceChannel) * height / 4;
+            for (var scopeIndex = 1; scopeIndex < 288; scopeIndex++) {
+                var scopeX = scopeIndex * width / 288;
+                var scopeSampleY = scopeY + avsWaveSigned(scopeIndex, 287, sourceChannel) * height / 4;
+                vertexCount = addAvsPixelSegmentTo(avsStackVertices, vertexCount,
+                        lastScopeX, lastScopeY, scopeX, scopeSampleY,
+                        color, 1, lineWidth);
+                lastScopeX = scopeX;
+                lastScopeY = scopeSampleY;
+            }
+        } else {
+            var solidScopeY = yPosition === 2 ? height / 4 : yPosition * height / 2;
+            var solidScopeBase = solidScopeY + yscale * 128;
+            for (var solidScopeX = 0; solidScopeX < width; solidScopeX++) {
+                var solidScopeRead = solidScopeX * 288 / width;
+                var solidScopeValue = interpolateAvsWaveSigned(solidScopeRead, 287, sourceChannel);
+                vertexCount = addAvsPixelSegmentTo(avsStackVertices, vertexCount,
+                        solidScopeX, solidScopeBase - 1,
+                        solidScopeX, solidScopeY + solidScopeValue * height / 4,
+                        color, 1, lineWidth);
+            }
         }
         drawAvsVertices(avsStackVertices, vertexCount, renderer.lineMode.blendMode);
     }
@@ -1915,9 +2138,9 @@
         suite.setSlot(scope, slots.y, y);
         suite.setSlot(scope, slots.r, r);
         suite.setSlot(scope, slots.d, d);
-        suite.setSlot(scope, slots.red, avsColorComponent(color, 16));
-        suite.setSlot(scope, slots.green, avsColorComponent(color, 8));
-        suite.setSlot(scope, slots.blue, avsColorComponent(color, 0));
+        suite.setSlot(scope, slots.red, avsRawRed(color));
+        suite.setSlot(scope, slots.green, avsRawGreen(color));
+        suite.setSlot(scope, slots.blue, avsRawBlue(color));
         suite.setSlot(scope, slots.alpha, alpha);
         avsStackBaseScratch.x = x;
         avsStackBaseScratch.y = y;
@@ -2996,6 +3219,44 @@
         return addAvsSegmentTo(avsNeonVertices, vertexCount, start, end, avsNeonLineWidthPx);
     }
 
+    function addAvsPixelSegmentTo(vertices, vertexCount, x1, y1, x2, y2, color, alpha, lineWidth) {
+        var dx = Math.abs(x2 - x1);
+        var dy = Math.abs(y2 - y1);
+        if (!dx && !dy) {
+            return vertexCount;
+        }
+
+        var width = Math.max(1, Math.min(64, Math.round(lineWidth || 1)));
+        var lw2 = Math.floor(width / 2);
+        var r = avsRawRed(color);
+        var g = avsRawGreen(color);
+        var b = avsRawBlue(color);
+        var a = clamp(alpha == null ? 1 : alpha, 0, 1);
+        if (!dx) {
+            return addAvsLineQuadTo(vertices, vertexCount, x1 - lw2, y1, x1 - lw2 + width, y1,
+                    x2 - lw2, y2, x2 - lw2 + width, y2, r, g, b, a);
+        }
+        if (!dy) {
+            return addAvsLineQuadTo(vertices, vertexCount, x1, y1 - lw2, x2, y2 - lw2,
+                    x1, y1 - lw2 + width, x2, y2 - lw2 + width, r, g, b, a);
+        }
+        if (dy <= dx) {
+            return addAvsLineQuadTo(vertices, vertexCount, x1, y1 - lw2, x2, y2 - lw2,
+                    x1, y1 - lw2 + width, x2, y2 - lw2 + width, r, g, b, a);
+        }
+        return addAvsLineQuadTo(vertices, vertexCount, x1 - lw2, y1, x2 - lw2, y2,
+                x1 - lw2 + width, y1, x2 - lw2 + width, y2, r, g, b, a);
+    }
+
+    function addAvsPixelPointTo(vertices, vertexCount, x, y, color, alpha, lineWidth) {
+        var size = Math.max(1, Math.min(24, Math.round(lineWidth || 1)));
+        var half = Math.max(1, Math.floor(size / 2));
+        return addAvsLineQuadTo(vertices, vertexCount, x - half, y - half, x + half, y - half,
+                x - half, y + half, x + half, y + half,
+                avsRawRed(color), avsRawGreen(color), avsRawBlue(color),
+                clamp(alpha == null ? 1 : alpha, 0, 1));
+    }
+
     function addAvsSegmentTo(vertices, vertexCount, start, end, lineWidth) {
         var x1 = Math.trunc((start[0] + 1) * canvas.width * 0.5);
         var y1 = Math.trunc((start[1] + 1) * canvas.height * 0.5);
@@ -3228,6 +3489,10 @@
 
     function createAvsFeedbackProgram() {
         return createLinkedProgram(vertexSource, avsFeedbackFragmentSource);
+    }
+
+    function createAvsColorFadeProgram() {
+        return createLinkedProgram(vertexSource, avsColorFadeFragmentSource);
     }
 
     function resize() {
@@ -3641,6 +3906,9 @@
         avsFeedbackLocations.amount = gl.getUniformLocation(avsFeedbackProgram, "u_amount");
         avsFeedbackLocations.time = gl.getUniformLocation(avsFeedbackProgram, "u_time");
         avsFeedbackLocations.audio = gl.getUniformLocation(avsFeedbackProgram, "u_audio");
+        avsColorFadeLocations.position = gl.getAttribLocation(avsColorFadeProgram, "a_position");
+        avsColorFadeLocations.texture = gl.getUniformLocation(avsColorFadeProgram, "u_texture");
+        avsColorFadeLocations.faders = gl.getUniformLocation(avsColorFadeProgram, "u_faders");
     }
 
     function initLocations() {
@@ -3678,6 +3946,7 @@
             avsBlendProgram = createAvsBlendProgram();
             avsWarpProgram = createAvsWarpProgram();
             avsFeedbackProgram = createAvsFeedbackProgram();
+            avsColorFadeProgram = createAvsColorFadeProgram();
             gl.useProgram(program);
             initGeometry();
             initLineGeometry();
